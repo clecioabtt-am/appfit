@@ -1,64 +1,55 @@
-# AFIT — Plataforma Cloudflare: musculação e funcional
+# AFIT 3.0 — Cloudflare Pages + Pages Functions
 
-Projeto React + Vite + Cloudflare Worker, D1, R2 e integração inicial com Asaas.
+Plataforma responsiva e instalável (PWA) para musculação, funcional, dietas, dicas e assinaturas.
 
-## Atualizações desta versão
+## Recursos Cloudflare já esperados
 
-- Cadastro de musculação, funcional e outras modalidades
-- Vídeo do personal e imagem de capa
-- Descrição, objetivo, como executar, benefícios e erros comuns
-- Equipamentos, nível, séries, repetições, duração, descanso e tags
-- Exercícios executados por repetições, tempo ou distância
-- Busca e filtros por modalidade para o aluno
-- Layout mobile-first e PWA instalável
-- Migration `0002_functional_training.sql` para atualizar bancos existentes
+No projeto Pages `appfit`:
 
-## Preparação
+- Binding D1: `DB` → `afit-database`
+- Binding R2: `MEDIA` → `afit-media`
+- Variável: `ASAAS_ENV=sandbox`
+- Secrets: `JWT_SECRET` e `SETUP_TOKEN`
+- Posteriormente: `ASAAS_API_KEY` e `ASAAS_WEBHOOK_TOKEN`
 
-```bash
-npm install
-npx wrangler login
-npx wrangler d1 create afit-database
-npx wrangler r2 bucket create afit-media
-```
+## Deploy GitHub → Cloudflare Pages
 
-Copie o `database_id` para `wrangler.jsonc`.
-
-## Banco
-
-```bash
-npm run db:remote
-```
-
-## Secrets
-
-```bash
-npx wrangler secret put JWT_SECRET
-npx wrangler secret put SETUP_TOKEN
-npx wrangler secret put ASAAS_API_KEY
-npx wrangler secret put ASAAS_WEBHOOK_TOKEN
-```
-
-Mantenha `ASAAS_ENV` como `sandbox` durante os testes.
-
-## Deploy
-
-```bash
-npm run deploy
-```
-
-O administrador alimenta os exercícios dentro da opção **Exercícios**. Os vídeos e imagens vão para o R2 e os demais dados para o D1.
-
-
-## Configuração obrigatória no Cloudflare Git Deploy
-
-Se os arquivos `package.json`, `src` e `wrangler.jsonc` estiverem dentro da pasta
-`AFIT_Full_Cloudflare_Corrigido`, configure:
-
-- Root directory: `AFIT_Full_Cloudflare_Corrigido`
+- Framework preset: `None`
 - Build command: `npm run build`
-- Deploy command: `npx wrangler deploy`
+- Build output directory: `dist`
+- Root directory: vazio
 
-Se esses arquivos estiverem diretamente na raiz do repositório, deixe Root directory vazio.
+## Banco D1
 
-Antes do deploy, substitua `COLE_AQUI_O_ID_DO_D1` no `wrangler.jsonc`.
+Abra `migrations/0001_initial.sql`, copie o conteúdo e execute no Console do banco `afit-database`.
+
+## Primeiro administrador
+
+Depois do deploy e da migration, abra a página. Enquanto nenhum administrador existir, aparecerá a aba **Configurar ADM**.
+
+Preencha:
+
+- Nome
+- E-mail
+- Senha com pelo menos 8 caracteres
+- O mesmo valor de `SETUP_TOKEN` configurado no Cloudflare
+
+Após a criação, a aba desaparece e o administrador entra pela opção **Entrar**.
+
+## PWA
+
+- Android: o botão **Instalar** é exibido quando o Chrome libera o prompt.
+- iPhone/iPad: a página orienta `Compartilhar → Adicionar à Tela de Início`.
+- O projeto inclui manifesto, ícones e Service Worker.
+
+## Uploads
+
+Vídeos e imagens vão para o bucket R2 `afit-media`. O upload simples desta versão aceita arquivos de até 95 MB. Para vídeos maiores e streaming adaptativo, recomenda-se Cloudflare Stream ou upload direto multipart para R2.
+
+## Asaas
+
+O frontend cria a cobrança pela rota `/api/payments/checkout`. O webhook deverá apontar para:
+
+`https://SEU-DOMINIO/api/asaas/webhook`
+
+e enviar o token configurado em `ASAAS_WEBHOOK_TOKEN`.
