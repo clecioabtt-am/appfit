@@ -1,0 +1,11 @@
+CONFIGURAÇÃO NO CLOUDFLARE PAGES
+
+Framework preset: None
+Build command: npm run build
+Build output directory: dist
+Root directory: vazio
+
+IMPORTANTE:
+1. Apague os arquivos antigos do repositório antes de subir esta versão.
+2. Confirme que o novo commit aparece no GitHub.
+3. O log não pode continuar mostrando o commit antigo f417a13.

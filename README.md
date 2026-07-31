@@ -48,3 +48,17 @@ npm run deploy
 ```
 
 O administrador alimenta os exercícios dentro da opção **Exercícios**. Os vídeos e imagens vão para o R2 e os demais dados para o D1.
+
+
+## Configuração obrigatória no Cloudflare Git Deploy
+
+Se os arquivos `package.json`, `src` e `wrangler.jsonc` estiverem dentro da pasta
+`AFIT_Full_Cloudflare_Corrigido`, configure:
+
+- Root directory: `AFIT_Full_Cloudflare_Corrigido`
+- Build command: `npm run build`
+- Deploy command: `npx wrangler deploy`
+
+Se esses arquivos estiverem diretamente na raiz do repositório, deixe Root directory vazio.
+
+Antes do deploy, substitua `COLE_AQUI_O_ID_DO_D1` no `wrangler.jsonc`.
