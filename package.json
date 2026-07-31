@@ -1,0 +1,27 @@
+{
+  "name": "afit-cloudflare-platform",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "deploy": "npm run build && wrangler deploy",
+    "cf-typegen": "wrangler types",
+    "db:local": "wrangler d1 migrations apply AFIT_DB --local",
+    "db:remote": "wrangler d1 migrations apply AFIT_DB --remote",
+    "dev:worker": "npm run build && wrangler dev"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "wrangler": "latest"
+  }
+}

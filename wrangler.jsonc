@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "afit-app",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-07-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "./dist", "binding": "ASSETS", "not_found_handling": "single-page-application" },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "afit-database", "database_id": "COLE_AQUI_O_ID_DO_D1", "migrations_dir": "migrations" }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "afit-media" }
+  ],
+  "vars": {
+    "ASAAS_ENV": "sandbox",
+    "APP_URL": "http://localhost:5173"
+  }
+}

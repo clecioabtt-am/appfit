@@ -1,51 +1,50 @@
-# AFIT — versão web PWA
+# AFIT — Plataforma Cloudflare: musculação e funcional
 
-Projeto web responsivo e instalável, pronto para GitHub e Cloudflare Pages.
+Projeto React + Vite + Cloudflare Worker, D1, R2 e integração inicial com Asaas.
 
-## Recursos incluídos
-- Layout preto e amarelo baseado na identidade AFIT
-- Dashboard do aluno
-- Planos mensal e trimestral
-- Treinos e detalhes de exercícios
-- Espaço para vídeo do personal
-- Dieta, dicas, consultoria e perfil
-- Navegação responsiva para desktop e celular
-- PWA instalável no Android/iPhone
-- Service Worker para cache básico/offline
-- Sem framework e sem etapa de build
+## Atualizações desta versão
 
-## Testar localmente
-O Service Worker não funciona abrindo `index.html` diretamente. Execute um servidor local:
+- Cadastro de musculação, funcional e outras modalidades
+- Vídeo do personal e imagem de capa
+- Descrição, objetivo, como executar, benefícios e erros comuns
+- Equipamentos, nível, séries, repetições, duração, descanso e tags
+- Exercícios executados por repetições, tempo ou distância
+- Busca e filtros por modalidade para o aluno
+- Layout mobile-first e PWA instalável
+- Migration `0002_functional_training.sql` para atualizar bancos existentes
+
+## Preparação
 
 ```bash
-python -m http.server 8080
+npm install
+npx wrangler login
+npx wrangler d1 create afit-database
+npx wrangler r2 bucket create afit-media
 ```
 
-Acesse `http://localhost:8080`.
+Copie o `database_id` para `wrangler.jsonc`.
 
-## Publicar no GitHub
-1. Crie um repositório.
-2. Envie todos os arquivos desta pasta para a raiz do repositório.
+## Banco
 
-## Deploy no Cloudflare Pages
-1. Acesse **Workers & Pages** no painel Cloudflare.
-2. Clique em **Create** > **Pages** > **Connect to Git**.
-3. Selecione o repositório.
-4. Em **Framework preset**, escolha `None`.
-5. Deixe **Build command** vazio.
-6. Em **Build output directory**, use `/` ou deixe vazio conforme o painel permitir.
-7. Faça o deploy.
+```bash
+npm run db:remote
+```
 
-## Instalação como aplicativo
-- Android/Chrome: o botão “Instalar” usa o evento nativo `beforeinstallprompt`.
-- iPhone/Safari: o sistema mostra instruções para “Adicionar à Tela de Início”.
-- A instalação PWA exige HTTPS; o domínio `.pages.dev` já fornece HTTPS.
+## Secrets
 
-## Integrações futuras
-- Cloudflare Workers: API e autenticação
-- Cloudflare D1: alunos, treinos, dietas e assinaturas
-- Cloudflare R2: vídeos e imagens
-- Asaas/Mercado Pago: cobrança recorrente
+```bash
+npx wrangler secret put JWT_SECRET
+npx wrangler secret put SETUP_TOKEN
+npx wrangler secret put ASAAS_API_KEY
+npx wrangler secret put ASAAS_WEBHOOK_TOKEN
+```
 
-## Observação
-Os dados atuais são demonstrativos e ficam em `app.js`. Substitua-os por chamadas à API quando o backend estiver pronto.
+Mantenha `ASAAS_ENV` como `sandbox` durante os testes.
+
+## Deploy
+
+```bash
+npm run deploy
+```
+
+O administrador alimenta os exercícios dentro da opção **Exercícios**. Os vídeos e imagens vão para o R2 e os demais dados para o D1.
