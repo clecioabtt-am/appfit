@@ -2,5 +2,20 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "appfit",
   "compatibility_date": "2026-07-31",
-  "pages_build_output_dir": "./dist"
+  "pages_build_output_dir": "./dist",
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "afit-database",
+      "database_id": "234c4b47-688f-473a-b56e-bca536cdaf09"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "afit-media"
+    }
+  ]
 }
