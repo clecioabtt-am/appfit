@@ -805,7 +805,7 @@ function ExerciseLibrary({ items, personalized=false }: { items: any[]; personal
   const [selected, setSelected] = useState<any>(null);
   const [category, setCategory] = useState('Todos');
   const [search, setSearch] = useState('');
-  const [series, setSeries] = useState(0); const [restLeft,setRestLeft]=useState(0); const [running,setRunning]=useState(false); const [done,setDone]=useState<Set<number>>(new Set());
+  const [series, setSeries] = useState(0); const [restLeft,setRestLeft]=useState(0); const [running,setRunning]=useState(false); const [resting,setResting]=useState(false); const [done,setDone]=useState<Set<number>>(new Set());
 
   const categories = [
     'Todos',
@@ -823,10 +823,10 @@ function ExerciseLibrary({ items, personalized=false }: { items: any[]; personal
 
   useEffect(()=>{ if(restLeft<=0)return; const t=setInterval(()=>setRestLeft(v=>Math.max(0,v-1)),1000); return()=>clearInterval(t);},[restLeft]);
   const restSeconds=(v:any)=>{const m=String(v||'60').match(/(\d+)/); return m?Number(m[1]):60};
-  const start=(x:any)=>{setSelected(x);setSeries(1);setRestLeft(0);setRunning(true)};
-  const finishSeries=()=>{if(!selected)return; const total=Number(selected.sets||1); if(series>=total)return; setRestLeft(restSeconds(selected.rest));};
-  const nextSeries=()=>{setRestLeft(0);setSeries(v=>v+1)};
-  const complete=async()=>{if(!selected)return; await api.completeWorkout(Number(selected.exerciseId||selected.id)); setDone(new Set([...done,Number(selected.exerciseId||selected.id)])); setRunning(false)};
+  const start=(x:any)=>{setSelected(x);setSeries(1);setRestLeft(0);setResting(false);setRunning(true)};
+  const finishSeries=()=>{if(!selected)return; setResting(true); setRestLeft(restSeconds(selected.rest));};
+  const nextSeries=()=>{if(restLeft>0)return; const total=Number(selected?.sets||1); setResting(false); setRestLeft(0); if(series<total)setSeries(v=>v+1);};
+  const complete=async()=>{if(!selected||restLeft>0)return; await api.completeWorkout(Number(selected.exerciseId||selected.id)); setDone(new Set([...done,Number(selected.exerciseId||selected.id)])); setResting(false); setRestLeft(0); setRunning(false)};
 
   return (
     <>
@@ -944,7 +944,7 @@ function ExerciseLibrary({ items, personalized=false }: { items: any[]; personal
 
             {selected.tags && <Detail title="Tags" text={selected.tags} />}
             <div className="workoutRunner">
-              {done.has(Number(selected.exerciseId||selected.id)) ? <button className="completedButton">✓ Treino concluído</button> : !running ? <button className="primary" onClick={()=>start(selected)}>Iniciar treino</button> : <><b>Série {series} de {selected.sets||1}</b>{restLeft>0 ? <><div className="restTimer">Descanso <strong>{restLeft}s</strong></div><button className="primary" disabled={restLeft>0} onClick={nextSeries}>Continuar série</button></> : series < Number(selected.sets||1) ? <button className="primary" onClick={finishSeries}>Finalizar série {series}</button> : <button className="primary" onClick={complete}>Concluir treino</button>}</>}
+              {done.has(Number(selected.exerciseId||selected.id)) ? <button className="completedButton">✓ Treino concluído</button> : !running ? <button className="primary" onClick={()=>start(selected)}>Iniciar treino</button> : <><b>Série {series} de {selected.sets||1}</b>{resting ? <><div className="restTimer">Descanso <strong>{restLeft}s</strong></div>{series < Number(selected.sets||1) ? <button className={`primary ${restLeft===0?'readyPulse':''}`} disabled={restLeft>0} onClick={nextSeries}>{restLeft>0?'Aguarde o descanso':`Começar série ${series+1}`}</button> : <button className={`primary ${restLeft===0?'readyPulse':''}`} disabled={restLeft>0} onClick={complete}>{restLeft>0?'Aguarde o descanso':'Concluir treino'}</button>}</> : <button className="primary" onClick={finishSeries}>Finalizar série {series}</button>}</>}
             </div>
           </article>
         </div>
