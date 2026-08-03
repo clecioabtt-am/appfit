@@ -6,6 +6,7 @@ export type User = {
   subscriptionStatus: string;
   subscriptionUntil?: string;
   trialUsed?: boolean;
+  profileImageUrl?: string;
 };
 
 export type Plan = {
@@ -32,6 +33,7 @@ export type PaymentStatusResponse = {
   status: string;
   until?: string;
   trialUsed?: boolean;
+  profileImageUrl?: string;
 };
 
 const token = () => localStorage.getItem("afit_token");
@@ -133,6 +135,8 @@ export const api = {
       }),
     }),
 
+  resetPassword: (payload: { email:string; cpf5:string; password:string }) => request<{ok:boolean}>("/api/auth/reset-password", {method:"POST", body:JSON.stringify(payload)}),
+
   me: () =>
     request<{
       user: User;
@@ -175,6 +179,13 @@ export const api = {
     }>(
       `/api/admin/${resource}`,
     ),
+
+  adminDelete: (resource:string,id:number) => request<{ok:boolean}>(`/api/admin/${resource}?id=${id}`, {method:"DELETE"}),
+  adminUpdate: (resource:string, body:unknown) => request<{ok:boolean}>(`/api/admin/${resource}`, {method:"PUT", body:JSON.stringify(body)}),
+  assignments: (studentId:number) => request<{items:any[]}>(`/api/admin/assignments?studentId=${studentId}`),
+  saveAssignments: (body:unknown) => request<{ok:boolean}>("/api/admin/assignments", {method:"POST", body:JSON.stringify(body)}),
+  completeWorkout: (exerciseId:number) => request<{ok:boolean}>("/api/student/workout-complete", {method:"POST", body:JSON.stringify({exerciseId})}),
+  profilePhoto: (file:File) => { const body=new FormData(); body.append("file",file); return request<{url:string}>("/api/student/profile-photo", {method:"POST",body}); },
 
   adminSave: (
     resource: string,

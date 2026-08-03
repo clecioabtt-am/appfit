@@ -246,6 +246,19 @@ export const onRequest = async (context: Context): Promise<Response> => {
       return new Response(null, { status: 204 });
     }
 
+    if (path === "/api/auth/reset-password" && method === "POST") {
+      const body: any = await request.json();
+      const email = String(body.email || "").trim().toLowerCase();
+      const cpf5 = String(body.cpf5 || "").replace(/\D/g, "").slice(0, 5);
+      const password = String(body.password || "");
+      if (!email || cpf5.length !== 5 || password.length < 8) return error("Informe e-mail, os 5 primeiros números do CPF e uma nova senha com 8 caracteres.");
+      const record: any = await env.DB.prepare("SELECT id,cpf FROM users WHERE email=? AND role='student'").bind(email).first();
+      const stored = String(record?.cpf || "").replace(/\D/g, "");
+      if (!record || stored.slice(0,5) !== cpf5) return error("Dados de recuperação não conferem.", 403);
+      await env.DB.prepare("UPDATE users SET password_hash=? WHERE id=?").bind(await hashPassword(password), record.id).run();
+      return json({ ok: true });
+    }
+
     const user = await requireUser(request, env);
 
     if (!user) {
@@ -254,7 +267,7 @@ export const onRequest = async (context: Context): Promise<Response> => {
 
     if (path === "/api/auth/me" && method === "GET") {
       let record: any = await env.DB.prepare(
-        "SELECT id,name,email,role,subscription_status,subscription_until,trial_used FROM users WHERE id = ?",
+        "SELECT id,name,email,role,subscription_status,subscription_until,trial_used,profile_image_url FROM users WHERE id = ?",
       )
         .bind(user.id)
         .first();
@@ -274,6 +287,7 @@ export const onRequest = async (context: Context): Promise<Response> => {
           subscriptionStatus: record.subscription_status,
           subscriptionUntil: record.subscription_until,
           trialUsed: Boolean(record.trial_used),
+          profileImageUrl: record.profile_image_url || undefined,
         },
       });
     }
@@ -449,11 +463,26 @@ export const onRequest = async (context: Context): Promise<Response> => {
         ).all(),
       ]);
 
-      return json({
-        exercises: exercises.results,
-        tips: tips.results,
-        diet: [],
-      });
+      const assignments = await env.DB.prepare(`SELECT wa.id,wa.weekday,wa.sort_order AS sortOrder,e.id AS exerciseId,e.name,e.training_category AS trainingCategory,e.muscle_group AS muscleGroup,e.level,e.execution_mode AS executionMode,e.description,e.objective,e.instructions,e.benefits,e.common_errors AS commonErrors,e.equipment,e.sets,e.reps,e.duration,e.rest,e.tags,e.video_url AS videoUrl,e.image_url AS imageUrl FROM workout_assignments wa JOIN exercises e ON e.id=wa.exercise_id WHERE wa.student_id=? AND e.active=1 ORDER BY wa.weekday,wa.sort_order,wa.id`).bind(user.id).all();
+      const completions = await env.DB.prepare("SELECT exercise_id AS exerciseId,completed_date AS completedDate FROM workout_completions WHERE user_id=? AND completed_date >= date('now','-7 day')").bind(user.id).all();
+      return json({ exercises: exercises.results, tips: tips.results, diet: [], assignments: assignments.results, completions: completions.results });
+    }
+
+    if (path === "/api/student/profile-photo" && method === "POST") {
+      const formData = await request.formData(); const file = formData.get("file");
+      if (!(file instanceof File) || !String(file.type).startsWith("image/")) return error("Selecione uma imagem válida.");
+      if (file.size > 8 * 1024 * 1024) return error("A foto deve ter no máximo 8 MB.");
+      const key = `profiles/${user.id}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      await env.MEDIA.put(key, file.stream(), { httpMetadata: { contentType: file.type } });
+      const url = `/media/${encodeURIComponent(key)}`;
+      await env.DB.prepare("UPDATE users SET profile_image_url=? WHERE id=?").bind(url,user.id).run();
+      return json({ url });
+    }
+
+    if (path === "/api/student/workout-complete" && method === "POST") {
+      const body:any=await request.json(); const exerciseId=Number(body.exerciseId);
+      await env.DB.prepare("INSERT OR IGNORE INTO workout_completions(user_id,exercise_id,completed_date) VALUES(?,?,date('now'))").bind(user.id,exerciseId).run();
+      return json({ok:true});
     }
 
     if (!path.startsWith("/api/admin/")) {
@@ -576,9 +605,34 @@ export const onRequest = async (context: Context): Promise<Response> => {
 
       students: {
         select:
-          "SELECT id,name,email,phone,subscription_status,subscription_until,trial_used,created_at FROM users WHERE role='student' ORDER BY id DESC",
+          `SELECT u.id,u.name,u.email,u.cpf,u.phone,u.profile_image_url AS profileImageUrl,u.subscription_status,u.subscription_until,u.trial_used,u.created_at,
+          (SELECT p.name FROM payments py JOIN plans p ON p.id=py.plan_id WHERE py.user_id=u.id AND py.status IN ('RECEIVED','CONFIRMED','RECEIVED_IN_CASH') ORDER BY py.id DESC LIMIT 1) AS paid_plan,
+          (SELECT py.status FROM payments py WHERE py.user_id=u.id ORDER BY py.id DESC LIMIT 1) AS last_payment_status
+          FROM users u WHERE u.role='student' ORDER BY u.id DESC`,
       },
     };
+
+    if (resource === "exercises" && method === "PUT") {
+      const body:any=await request.json(); if(!body.id) return error("Exercício inválido.");
+      await env.DB.prepare(`UPDATE exercises SET name=?,training_category=?,muscle_group=?,level=?,execution_mode=?,description=?,objective=?,instructions=?,benefits=?,common_errors=?,equipment=?,sets=?,reps=?,duration=?,rest=?,tags=?,video_url=?,image_url=? WHERE id=?`).bind(body.name,body.trainingCategory||"Musculação",body.muscleGroup||null,body.level||"Iniciante",body.executionMode||"Repetições",body.description||null,body.objective||null,body.instructions||null,body.benefits||null,body.commonErrors||null,body.equipment||null,Number(body.sets||0),body.reps||null,body.duration||null,body.rest||null,body.tags||null,body.videoUrl||null,body.imageUrl||null,Number(body.id)).run(); return json({ok:true});
+    }
+    if ((resource === "exercises" || resource === "students") && method === "DELETE") {
+      const id=Number(new URL(request.url).searchParams.get("id")); if(!id) return error("ID inválido.");
+      if(resource==="students") { await env.DB.prepare("DELETE FROM workout_assignments WHERE student_id=?").bind(id).run(); await env.DB.prepare("DELETE FROM workout_completions WHERE user_id=?").bind(id).run(); await env.DB.prepare("DELETE FROM diet_items WHERE user_id=?").bind(id).run(); await env.DB.prepare("DELETE FROM payments WHERE user_id=?").bind(id).run(); await env.DB.prepare("DELETE FROM users WHERE id=? AND role='student'").bind(id).run(); }
+      else await env.DB.prepare("DELETE FROM exercises WHERE id=?").bind(id).run();
+      return json({ok:true});
+    }
+    if (resource === "assignments" && method === "GET") {
+      const studentId=Number(new URL(request.url).searchParams.get("studentId"));
+      const r=await env.DB.prepare("SELECT id,student_id AS studentId,weekday,exercise_id AS exerciseId,sort_order AS sortOrder FROM workout_assignments WHERE student_id=? ORDER BY weekday,sort_order,id").bind(studentId).all(); return json({items:r.results});
+    }
+    if (resource === "assignments" && method === "POST") {
+      const body:any=await request.json(); const studentId=Number(body.studentId); const weekday=Number(body.weekday); const ids=(body.exerciseIds||[]).map(Number);
+      if(!studentId || weekday<0 || weekday>6) return error("Aluno ou dia inválido.");
+      await env.DB.prepare("DELETE FROM workout_assignments WHERE student_id=? AND weekday=?").bind(studentId,weekday).run();
+      for(let i=0;i<ids.length;i++) await env.DB.prepare("INSERT INTO workout_assignments(student_id,weekday,exercise_id,sort_order) VALUES(?,?,?,?)").bind(studentId,weekday,ids[i],i).run();
+      return json({ok:true});
+    }
 
     const definition = definitions[resource];
 

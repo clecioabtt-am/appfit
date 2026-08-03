@@ -158,6 +158,8 @@ function Auth({ onAuth }: { onAuth: (u: User, t: string) => void }) {
   });
   const [error, setError] = useState('');
   const [setupAvailable, setSetupAvailable] = useState(false);
+  const [forgot, setForgot] = useState(false);
+  const [reset, setReset] = useState({email:'',cpf5:'',password:'',confirm:''});
 
   useEffect(() => {
     api
@@ -335,7 +337,11 @@ function Auth({ onAuth }: { onAuth: (u: User, t: string) => void }) {
                   ? 'Criar administrador'
                   : 'Continuar para os planos'}
             </button>
+            {mode === 'login' && <button type="button" className="linkButton" onClick={()=>setForgot(!forgot)}>Esqueci a senha</button>}
           </form>
+          {forgot && <form className="resetBox" onSubmit={async e=>{e.preventDefault(); if(reset.password!==reset.confirm){setError('As senhas não conferem.');return;} try{await api.resetPassword({email:reset.email,cpf5:reset.cpf5,password:reset.password}); setError('Senha alterada com sucesso. Entre com a nova senha.'); setForgot(false);}catch(err:any){setError(err.message)}}}>
+            <h3>Recuperar senha</h3><label>E-mail<input type="email" required value={reset.email} onChange={e=>setReset({...reset,email:e.target.value})}/></label><label>5 primeiros números do CPF<input required maxLength={5} value={reset.cpf5} onChange={e=>setReset({...reset,cpf5:e.target.value.replace(/\D/g,'')})}/></label><label>Nova senha<input type="password" minLength={8} required value={reset.password} onChange={e=>setReset({...reset,password:e.target.value})}/></label><label>Confirmar nova senha<input type="password" minLength={8} required value={reset.confirm} onChange={e=>setReset({...reset,confirm:e.target.value})}/></label><button className="primary">Alterar senha</button>
+          </form>}
 
           <small>
             O mesmo login identifica automaticamente administrador e aluno.
@@ -366,18 +372,21 @@ function Shell({
     ['tips', 'Dicas'],
     ['diets', 'Dietas'],
     ['students', 'Alunos'],
+    ['assignments', 'Treinos personalizados'],
   ];
 
   const studentNav: Array<[string, string]> = [
     ['home', 'Início'],
     ['workouts', locked ? '🔒 Treinos' : 'Treinos'],
+    ['personalized', locked ? '🔒 Personalizado' : 'Treino personalizado'],
+    ['profile', 'Meu perfil'],
     ['mytips', locked ? '🔒 Dicas' : 'Dicas'],
     ['chat', locked ? '🔒 Consultoria' : 'Consultoria'],
     ['plans', 'Planos'],
   ];
 
   const nav = user.role === 'admin' ? adminNav : studentNav;
-  const restrictedPages = ['workouts', 'mytips', 'chat'];
+  const restrictedPages = ['workouts', 'personalized', 'mytips', 'chat'];
 
   let content: React.ReactNode;
 
@@ -397,7 +406,7 @@ function Shell({
       />
     );
   } else {
-    content = <Student page={page} />;
+    content = <Student page={page} user={user} refresh={refresh} />;
   }
 
   return (
@@ -685,11 +694,11 @@ function Plans({ refresh }: { refresh: () => void }) {
     </section>
   );
 }
-function Student({ page }: { page: string }) {
+function Student({ page, user, refresh }: { page: string; user: User; refresh:()=>void }) {
   const [data, setData] = useState<any>({
     exercises: [],
     tips: [],
-    diet: [],
+    diet: [], assignments: [], completions: [],
   });
 
   useEffect(() => {
@@ -713,6 +722,16 @@ function Student({ page }: { page: string }) {
         <ExerciseLibrary items={data.exercises} />
       </>
     );
+  }
+
+  if (page === 'personalized') {
+    const today = new Date().getDay();
+    const names=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+    const todayItems=(data.assignments||[]).filter((x:any)=>Number(x.weekday)===today);
+    return <><Title h={`Treino de hoje · ${names[today]}`} s="Treino semanal definido pelo seu personal" />{todayItems.length ? <ExerciseLibrary items={todayItems} personalized /> : <div className="empty">Nenhum treino foi atribuído para hoje.</div>}</>;
+  }
+  if (page === 'profile') {
+    return <><Title h="Meu perfil" s="Personalize sua conta AFIT"/><div className="profileCard">{user.profileImageUrl ? <img className="profilePhoto" src={user.profileImageUrl}/> : <div className="profilePlaceholder">{user.name.charAt(0)}</div>}<div><h2>{user.name}</h2><p>{user.email}</p><label className="uploadPhoto">Alterar foto<input type="file" accept="image/*" onChange={async e=>{const f=e.target.files?.[0]; if(f){await api.profilePhoto(f); refresh();}}}/></label></div></div></>;
   }
 
   if (page === 'workouts') {
@@ -782,10 +801,11 @@ function Student({ page }: { page: string }) {
   return null;
 }
 
-function ExerciseLibrary({ items }: { items: any[] }) {
+function ExerciseLibrary({ items, personalized=false }: { items: any[]; personalized?: boolean }) {
   const [selected, setSelected] = useState<any>(null);
   const [category, setCategory] = useState('Todos');
   const [search, setSearch] = useState('');
+  const [series, setSeries] = useState(0); const [restLeft,setRestLeft]=useState(0); const [running,setRunning]=useState(false); const [done,setDone]=useState<Set<number>>(new Set());
 
   const categories = [
     'Todos',
@@ -800,6 +820,13 @@ function ExerciseLibrary({ items }: { items: any[] }) {
         (x.trainingCategory || 'Musculação') === category) &&
       String(x.name).toLowerCase().includes(search.toLowerCase()),
   );
+
+  useEffect(()=>{ if(restLeft<=0)return; const t=setInterval(()=>setRestLeft(v=>Math.max(0,v-1)),1000); return()=>clearInterval(t);},[restLeft]);
+  const restSeconds=(v:any)=>{const m=String(v||'60').match(/(\d+)/); return m?Number(m[1]):60};
+  const start=(x:any)=>{setSelected(x);setSeries(1);setRestLeft(0);setRunning(true)};
+  const finishSeries=()=>{if(!selected)return; const total=Number(selected.sets||1); if(series>=total)return; setRestLeft(restSeconds(selected.rest));};
+  const nextSeries=()=>{setRestLeft(0);setSeries(v=>v+1)};
+  const complete=async()=>{if(!selected)return; await api.completeWorkout(Number(selected.exerciseId||selected.id)); setDone(new Set([...done,Number(selected.exerciseId||selected.id)])); setRunning(false)};
 
   return (
     <>
@@ -905,8 +932,7 @@ function ExerciseLibrary({ items }: { items: any[] }) {
             </div>
 
             <h2>{selected.name}</h2>
-            <p>{selected.description}</p>
-
+            <Detail title="Descrição" text={selected.description} />
             <Detail title="Objetivo" text={selected.objective} />
             <Detail title="Como executar" text={selected.instructions} />
             <Detail title="Benefícios" text={selected.benefits} />
@@ -917,6 +943,9 @@ function ExerciseLibrary({ items }: { items: any[] }) {
             />
 
             {selected.tags && <Detail title="Tags" text={selected.tags} />}
+            <div className="workoutRunner">
+              {done.has(Number(selected.exerciseId||selected.id)) ? <button className="completedButton">✓ Treino concluído</button> : !running ? <button className="primary" onClick={()=>start(selected)}>Iniciar treino</button> : <><b>Série {series} de {selected.sets||1}</b>{restLeft>0 ? <><div className="restTimer">Descanso <strong>{restLeft}s</strong></div><button className="primary" disabled={restLeft>0} onClick={nextSeries}>Continuar série</button></> : series < Number(selected.sets||1) ? <button className="primary" onClick={finishSeries}>Finalizar série {series}</button> : <button className="primary" onClick={complete}>Concluir treino</button>}</>}
+            </div>
           </article>
         </div>
       )}
@@ -924,19 +953,7 @@ function ExerciseLibrary({ items }: { items: any[] }) {
   );
 }
 
-const Detail = ({
-  title,
-  text,
-}: {
-  title: string;
-  text?: string;
-}) =>
-  text ? (
-    <>
-      <h3>{title}</h3>
-      <p className="preserve">{text}</p>
-    </>
-  ) : null;
+function Detail({title,text}:{title:string;text?:string}) { const [open,setOpen]=useState(false); if(!text)return null; return <div className="detailAccordion"><button onClick={()=>setOpen(!open)}><span>{title}</span><span>{open?'−':'+'}</span></button>{open&&<p className="preserve">{text}</p>}</div>; }
 
 function Admin({ page }: { page: string }) {
   if (page === 'admin') {
@@ -955,6 +972,8 @@ function Admin({ page }: { page: string }) {
       </>
     );
   }
+
+  if (page === 'assignments') return <AssignmentAdmin />;
 
   const map: any = {
     exercises: {
@@ -1005,6 +1024,7 @@ function AdminCrud({ kind, config }: { kind: string; config: any }) {
     executionMode: 'Repetições',
   });
   const [msg, setMsg] = useState('');
+  const [editing,setEditing]=useState<number|null>(null);
 
   const load = () =>
     api
@@ -1020,7 +1040,7 @@ function AdminCrud({ kind, config }: { kind: string; config: any }) {
     e.preventDefault();
 
     try {
-      await api.adminSave(kind, form);
+      if(editing && kind==='exercises') await api.adminUpdate(kind,{...form,id:editing}); else await api.adminSave(kind, form);
 
       setForm({
         trainingCategory: 'Musculação',
@@ -1028,7 +1048,7 @@ function AdminCrud({ kind, config }: { kind: string; config: any }) {
         executionMode: 'Repetições',
       });
 
-      setMsg('Salvo com sucesso.');
+      setEditing(null); setMsg('Salvo com sucesso.');
       load();
     } catch (e: any) {
       setMsg(e.message);
@@ -1184,16 +1204,22 @@ function AdminCrud({ kind, config }: { kind: string; config: any }) {
 
       <div className="table">
         {items.map((x: any) => (
-          <div key={x.id}>
-            <b>{x.name || x.title || x.email}</b>
-            <small>
-              {x.description || x.subscription_status || x.category}
-            </small>
+          <div key={x.id} className="adminRow">
+            <div><b>{x.name || x.title || x.email}</b><small>{kind==='students' ? `${x.subscription_status||''} · Plano pago: ${x.paid_plan||'nenhum'} · ${x.phone||''}` : (x.description || x.subscription_status || x.category)}</small>{kind==='students'&&<small>CPF: {x.cpf ? `***.***.${String(x.cpf).replace(/\D/g,'').slice(-5)}` : 'não informado'} · Acesso até: {x.subscription_until ? new Date(x.subscription_until).toLocaleDateString('pt-BR'):'-'}</small>}</div>
+            <div className="rowActions">{kind==='exercises'&&<button onClick={()=>{setForm({...x});setEditing(x.id);window.scrollTo({top:0,behavior:'smooth'})}}>Editar</button>}{['exercises','students'].includes(kind)&&<button className="danger" onClick={async()=>{if(confirm(`Deseja realmente remover ${x.name||x.email}?`)){await api.adminDelete(kind,x.id);load();}}}>Remover</button>}</div>
           </div>
         ))}
       </div>
     </>
   );
+}
+
+function AssignmentAdmin(){
+ const [students,setStudents]=useState<any[]>([]),[exercises,setExercises]=useState<any[]>([]); const [studentId,setStudentId]=useState(0); const [weekday,setWeekday]=useState(new Date().getDay()); const [selected,setSelected]=useState<number[]>([]); const [msg,setMsg]=useState('');
+ useEffect(()=>{api.adminList('students').then(r=>setStudents(r.items));api.adminList('exercises').then(r=>setExercises(r.items));},[]);
+ useEffect(()=>{if(!studentId)return; api.assignments(studentId).then(r=>setSelected(r.items.filter((x:any)=>Number(x.weekday)===weekday).map((x:any)=>Number(x.exerciseId))))},[studentId,weekday]);
+ const days=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+ return <><Title h="Treinos personalizados" s="Monte a rotina semanal de cada aluno"/><div className="assignmentControls"><label>Aluno<select value={studentId} onChange={e=>setStudentId(Number(e.target.value))}><option value={0}>Selecione...</option>{students.map(x=><option value={x.id} key={x.id}>{x.name} · {x.email}</option>)}</select></label><label>Dia da semana<select value={weekday} onChange={e=>setWeekday(Number(e.target.value))}>{days.map((d,i)=><option key={d} value={i}>{d}</option>)}</select></label></div><div className="assignmentList">{exercises.map(x=><label key={x.id}><input type="checkbox" checked={selected.includes(Number(x.id))} onChange={()=>setSelected(v=>v.includes(Number(x.id))?v.filter(i=>i!==Number(x.id)):[...v,Number(x.id)])}/><span><b>{x.name}</b><small>{x.muscleGroup||x.trainingCategory}</small></span></label>)}</div><button className="primary" disabled={!studentId} onClick={async()=>{await api.saveAssignments({studentId,weekday,exerciseIds:selected});setMsg('Treino do dia salvo com sucesso.')}}>Salvar treino de {days[weekday]}</button>{msg&&<div className="notice">{msg}</div>}</>;
 }
 
 const label = (s: string) =>
