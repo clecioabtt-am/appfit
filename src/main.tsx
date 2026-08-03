@@ -19,6 +19,14 @@ const plansFallback = [
     period: 'trimestre',
     description: 'Economia e acompanhamento por 3 meses.',
   },
+  {
+    id: 999999,
+    name: 'Plano Teste',
+    price: 0,
+    period: '20 dias',
+    description: 'Teste gratuito da plataforma por 20 dias, sem cobrança.',
+    duration_days: 20,
+  },
 ];
 
 function useInstallPrompt() {
@@ -363,14 +371,13 @@ function Shell({
   const studentNav: Array<[string, string]> = [
     ['home', 'Início'],
     ['workouts', locked ? '🔒 Treinos' : 'Treinos'],
-    ['mydiet', locked ? '🔒 Dieta' : 'Dieta'],
     ['mytips', locked ? '🔒 Dicas' : 'Dicas'],
     ['chat', locked ? '🔒 Consultoria' : 'Consultoria'],
     ['plans', 'Planos'],
   ];
 
   const nav = user.role === 'admin' ? adminNav : studentNav;
-  const restrictedPages = ['workouts', 'mydiet', 'mytips', 'chat'];
+  const restrictedPages = ['workouts', 'mytips', 'chat'];
 
   let content: React.ReactNode;
 
@@ -479,19 +486,14 @@ function StudentLockedHome({
         <h2>Falta pouco para começar</h2>
 
         <p>
-          Escolha seu plano e conclua o pagamento para liberar seus treinos,
-          dieta, dicas e consultoria personalizada.
+          Escolha um plano para liberar os recursos disponíveis nesta versão
+          de testes do AFIT.
         </p>
 
         <div className="unlockGrid">
           <div>
             🏋️
             <b>Treinos</b>
-          </div>
-
-          <div>
-            🥗
-            <b>Dieta</b>
           </div>
 
           <div>
@@ -530,8 +532,6 @@ function LockedFeature({
   const descriptions: Record<string, string> = {
     workouts:
       'Seus exercícios, séries, repetições e vídeos explicativos serão liberados após a ativação do plano.',
-    mydiet:
-      'Sua dieta personalizada ficará disponível após a confirmação da assinatura.',
     mytips:
       'As dicas exclusivas do personal estarão disponíveis após a ativação do plano.',
     chat:
@@ -570,45 +570,52 @@ function LockedFeature({
 function Plans({ refresh }: { refresh: () => void }) {
   const [plans, setPlans] = useState<any[]>(plansFallback);
   const [msg, setMsg] = useState('');
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   useEffect(() => {
-    api
-      .plans()
-      .then((x) => setPlans(x.plans))
-      .catch(() => {});
+    api.plans().then((x) => setPlans(x.plans)).catch(() => {});
   }, []);
 
-  const pay = async (id: number) => {
+  const choosePlan = async (plan: any) => {
     try {
-      const r = await api.checkout(id);
+      setBusyId(Number(plan.id));
+      setMsg('');
+
+      const r = await api.checkout(Number(plan.id));
+
+      if (r.trial) {
+        setMsg(
+          'Plano Teste ativado com sucesso. Você tem acesso gratuito por 20 dias.',
+        );
+        await Promise.resolve(refresh());
+        return;
+      }
 
       if (!r.invoiceUrl) {
         throw new Error('O Asaas não retornou o link de pagamento.');
       }
 
       window.open(r.invoiceUrl, '_blank');
-
       setMsg(
         'Fatura criada. Após o pagamento, volte aqui e clique em verificar pagamento.',
       );
     } catch (e: any) {
       setMsg(e.message);
+    } finally {
+      setBusyId(null);
     }
   };
 
   const check = async () => {
     try {
       const r = await api.paymentStatus();
-
       setMsg(
         r.status === 'ACTIVE'
-          ? 'Pagamento confirmado! Seu acesso foi liberado.'
+          ? 'Seu acesso está ativo.'
           : 'Pagamento ainda não foi confirmado.',
       );
 
-      if (r.status === 'ACTIVE') {
-        refresh();
-      }
+      if (r.status === 'ACTIVE') refresh();
     } catch (e: any) {
       setMsg(e.message);
     }
@@ -618,44 +625,66 @@ function Plans({ refresh }: { refresh: () => void }) {
     <section>
       <Title
         h="Escolha seu plano"
-        s="Pagamento seguro processado pelo Asaas"
+        s="Use o Plano Teste por 20 dias sem cobrança ou escolha um plano pago."
       />
 
       <div className="plans">
-        {plans.map((p) => (
-          <article className="plan" key={p.id}>
-            <span>{p.name}</span>
+        {plans.map((p) => {
+          const isTrial =
+            Number(p.price) === 0 ||
+            String(p.name).trim().toLowerCase() === 'plano teste';
 
-            <h2>R$ {Number(p.price).toFixed(2).replace('.', ',')}</h2>
+          return (
+            <article
+              className={`plan ${isTrial ? 'trialPlan' : ''}`}
+              key={p.id}
+            >
+              {isTrial && <span className="trialBadge">TESTE GRÁTIS</span>}
 
-            <small>/{p.period}</small>
+              <span>{p.name}</span>
 
-            <p>{p.description}</p>
+              <h2>
+                {isTrial
+                  ? 'GRÁTIS'
+                  : `R$ ${Number(p.price).toFixed(2).replace('.', ',')}`}
+              </h2>
 
-            <ul>
-              <li>Consultoria online</li>
-              <li>Musculação e funcional</li>
-              <li>Dietas personalizadas</li>
-              <li>Acompanhamento de evolução</li>
-            </ul>
+              <small>/{p.period}</small>
+              <p>{p.description}</p>
 
-            <button className="primary" onClick={() => pay(p.id)}>
-              Assinar plano
-            </button>
-          </article>
-        ))}
+              <ul>
+                <li>Treinos de musculação e funcional</li>
+                <li>Vídeos explicativos dos exercícios</li>
+                <li>Dicas AFIT</li>
+                <li>Consultoria online</li>
+                {isTrial && <li>Acesso completo por 20 dias</li>}
+              </ul>
+
+              <button
+                className="primary"
+                disabled={busyId === Number(p.id)}
+                onClick={() => choosePlan(p)}
+              >
+                {busyId === Number(p.id)
+                  ? 'Processando...'
+                  : isTrial
+                    ? 'Testar grátis por 20 dias'
+                    : 'Assinar plano'}
+              </button>
+            </article>
+          );
+        })}
       </div>
 
       {msg && (
         <div className="notice">
           {msg}
-          <button onClick={check}>Verificar pagamento</button>
+          <button onClick={check}>Verificar acesso</button>
         </div>
       )}
     </section>
   );
 }
-
 function Student({ page }: { page: string }) {
   const [data, setData] = useState<any>({
     exercises: [],
