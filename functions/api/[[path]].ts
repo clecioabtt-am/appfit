@@ -601,7 +601,27 @@ export const onRequest = async (context: Context): Promise<Response> => {
       const cr:any=await env.DB.prepare("SELECT id,status FROM consultation_requests WHERE id=?").bind(requestId).first();
       if(!cr||['CONFIRMED','COMPLETED','CANCELLED'].includes(cr.status)) return error("Solicitação inválida para envio de horários.",409);
       await env.DB.prepare("DELETE FROM consultation_slots WHERE request_id=? AND status='AVAILABLE'").bind(requestId).run();
-      for(const startsAt of slots){ await env.DB.prepare("INSERT INTO consultation_slots(request_id,starts_at,status) VALUES(?,?,'AVAILABLE')").bind(requestId,startsAt).run(); }
+
+      // Compatibilidade com bancos D1 criados por versões anteriores do módulo de consultoria.
+      // A estrutura antiga possuía available_date/available_time como NOT NULL; a atual usa starts_at.
+      const slotColumns = await env.DB.prepare("PRAGMA table_info(consultation_slots)").all();
+      const slotColumnNames = new Set((slotColumns.results as any[]).map((c:any)=>String(c.name)));
+      const hasLegacySlotColumns = slotColumnNames.has('available_date') && slotColumnNames.has('available_time');
+
+      for(const startsAt of slots){
+        if(hasLegacySlotColumns){
+          const normalized=String(startsAt).trim();
+          const availableDate=normalized.slice(0,10);
+          const availableTime=normalized.length>=16 ? normalized.slice(11,16) : normalized.slice(11);
+          await env.DB.prepare(
+            "INSERT INTO consultation_slots(request_id,available_date,available_time,starts_at,status) VALUES(?,?,?,?,'AVAILABLE')"
+          ).bind(requestId,availableDate,availableTime,normalized).run();
+        } else {
+          await env.DB.prepare(
+            "INSERT INTO consultation_slots(request_id,starts_at,status) VALUES(?,?,'AVAILABLE')"
+          ).bind(requestId,startsAt).run();
+        }
+      }
       await env.DB.prepare("UPDATE consultation_requests SET status='AVAILABILITY_SENT',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(requestId).run();
       return json({ok:true});
     }
