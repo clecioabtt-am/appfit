@@ -206,6 +206,23 @@ export const onRequest = async (context: Context): Promise<Response> => {
       const payment = event.payment;
 
       if (payment?.id) {
+        const consultation: any = await env.DB.prepare(
+          "SELECT id FROM consultation_requests WHERE asaas_payment_id = ?",
+        ).bind(payment.id).first();
+
+        if (consultation) {
+          const paid = ["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"].includes(payment.status);
+          await env.DB.prepare(
+            `UPDATE consultation_requests
+             SET payment_status = ?,
+                 status = CASE WHEN ? = 1 THEN 'CONFIRMED' ELSE status END,
+                 paid_at = CASE WHEN ? = 1 THEN COALESCE(paid_at,CURRENT_TIMESTAMP) ELSE paid_at END,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+          ).bind(payment.status, paid ? 1 : 0, paid ? 1 : 0, consultation.id).run();
+          return new Response(null, { status: 204 });
+        }
+
         await env.DB.prepare(
           "UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE asaas_payment_id = ?",
         )
@@ -290,6 +307,73 @@ export const onRequest = async (context: Context): Promise<Response> => {
           profileImageUrl: record.profile_image_url || undefined,
         },
       });
+    }
+
+    if (path === "/api/student/consultation" && method === "GET") {
+      if (user.role !== "student") return error("Operação exclusiva para alunos.", 403);
+      const req: any = await env.DB.prepare(
+        `SELECT cr.id,cr.status,cr.price,cr.selected_slot_id AS selectedSlotId,
+                cr.payment_status AS paymentStatus,cr.invoice_url AS invoiceUrl,
+                cr.meeting_url AS meetingUrl,cr.requested_at AS requestedAt,
+                cs.starts_at AS selectedStartsAt
+         FROM consultation_requests cr
+         LEFT JOIN consultation_slots cs ON cs.id=cr.selected_slot_id
+         WHERE cr.student_id=? AND cr.status!='CANCELLED'
+         ORDER BY cr.id DESC LIMIT 1`,
+      ).bind(user.id).first();
+      if (!req) return json({ request: null, slots: [] });
+      const slots = await env.DB.prepare(
+        `SELECT id,starts_at AS startsAt,status FROM consultation_slots
+         WHERE request_id=? AND status!='CANCELLED' ORDER BY starts_at`,
+      ).bind(req.id).all();
+      return json({ request: req, slots: slots.results });
+    }
+
+    if (path === "/api/student/consultation/request" && method === "POST") {
+      if (user.role !== "student") return error("Operação exclusiva para alunos.", 403);
+      const existing: any = await env.DB.prepare(
+        `SELECT id,status FROM consultation_requests WHERE student_id=?
+         AND status IN ('REQUESTED','AVAILABILITY_SENT','AWAITING_PAYMENT','CONFIRMED')
+         ORDER BY id DESC LIMIT 1`,
+      ).bind(user.id).first();
+      if (existing) return error("Você já possui uma solicitação de consultoria em andamento.", 409);
+      const created: any = await env.DB.prepare(
+        "INSERT INTO consultation_requests(student_id,price,status) VALUES(?,300,'REQUESTED') RETURNING id",
+      ).bind(user.id).first();
+      return json({ ok:true, id:created.id, status:'REQUESTED' }, 201);
+    }
+
+    if (path === "/api/student/consultation/select" && method === "POST") {
+      if (user.role !== "student") return error("Operação exclusiva para alunos.", 403);
+      const body:any = await request.json();
+      const slotId = Number(body.slotId);
+      const slot:any = await env.DB.prepare(
+        `SELECT cs.id,cs.request_id,cs.starts_at,cr.status,cr.price,cr.student_id
+         FROM consultation_slots cs JOIN consultation_requests cr ON cr.id=cs.request_id
+         WHERE cs.id=? AND cr.student_id=? AND cs.status='AVAILABLE'`,
+      ).bind(slotId,user.id).first();
+      if (!slot || !['AVAILABILITY_SENT','REQUESTED'].includes(slot.status)) return error("Este horário não está mais disponível.",409);
+
+      let student:any = await env.DB.prepare("SELECT * FROM users WHERE id=?").bind(user.id).first();
+      let customerId=student.asaas_customer_id;
+      if(!customerId){
+        const customer=await asaasRequest(env,"/customers","POST",{name:student.name,cpfCnpj:student.cpf,email:student.email,mobilePhone:student.phone,externalReference:String(student.id)});
+        customerId=customer.id;
+        await env.DB.prepare("UPDATE users SET asaas_customer_id=? WHERE id=?").bind(customerId,user.id).run();
+      }
+      const dueDate=new Date(Date.now()+3*86_400_000).toISOString().slice(0,10);
+      const payment=await asaasRequest(env,"/payments","POST",{
+        customer:customerId,billingType:"UNDEFINED",value:300,dueDate,
+        description:`AFIT - Consultoria Online - ${slot.starts_at}`,
+        externalReference:`consultation:${slot.request_id}`,
+      });
+      const invoiceUrl=payment.invoiceUrl||payment.bankSlipUrl;
+      await env.DB.batch([
+        env.DB.prepare("UPDATE consultation_slots SET status='SELECTED' WHERE id=?").bind(slot.id),
+        env.DB.prepare("UPDATE consultation_slots SET status='CANCELLED' WHERE request_id=? AND id<>?").bind(slot.request_id,slot.id),
+        env.DB.prepare(`UPDATE consultation_requests SET selected_slot_id=?,status='AWAITING_PAYMENT',asaas_payment_id=?,payment_status=?,invoice_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(slot.id,payment.id,payment.status,invoiceUrl,slot.request_id),
+      ]);
+      return json({ invoiceUrl,paymentId:payment.id,status:'AWAITING_PAYMENT' });
     }
 
     if (path === "/api/payments/checkout" && method === "POST") {
@@ -491,6 +575,53 @@ export const onRequest = async (context: Context): Promise<Response> => {
 
     if (user.role !== "admin") {
       return error("Acesso restrito ao administrador.", 403);
+    }
+
+    if (path === "/api/admin/consultations" && method === "GET") {
+      const rows = await env.DB.prepare(
+        `SELECT cr.id,cr.student_id AS studentId,u.name,u.email,u.phone,cr.status,cr.price,
+                cr.payment_status AS paymentStatus,cr.invoice_url AS invoiceUrl,
+                cr.meeting_url AS meetingUrl,cr.requested_at AS requestedAt,
+                cr.selected_slot_id AS selectedSlotId,cs.starts_at AS selectedStartsAt
+         FROM consultation_requests cr JOIN users u ON u.id=cr.student_id
+         LEFT JOIN consultation_slots cs ON cs.id=cr.selected_slot_id
+         ORDER BY CASE cr.status WHEN 'REQUESTED' THEN 0 WHEN 'AVAILABILITY_SENT' THEN 1 WHEN 'AWAITING_PAYMENT' THEN 2 WHEN 'CONFIRMED' THEN 3 ELSE 4 END, cr.id DESC`,
+      ).all();
+      for (const r of rows.results as any[]) {
+        const slots=await env.DB.prepare("SELECT id,starts_at AS startsAt,status FROM consultation_slots WHERE request_id=? ORDER BY starts_at").bind(r.id).all();
+        r.slots=slots.results;
+      }
+      return json({items:rows.results});
+    }
+
+    if (path === "/api/admin/consultations/slots" && method === "POST") {
+      const body:any=await request.json(); const requestId=Number(body.requestId);
+      const slots=(Array.isArray(body.slots)?body.slots:[]).map((x:any)=>String(x).trim()).filter(Boolean);
+      if(!requestId||!slots.length) return error("Informe pelo menos uma data e horário.");
+      const cr:any=await env.DB.prepare("SELECT id,status FROM consultation_requests WHERE id=?").bind(requestId).first();
+      if(!cr||['CONFIRMED','COMPLETED','CANCELLED'].includes(cr.status)) return error("Solicitação inválida para envio de horários.",409);
+      await env.DB.prepare("DELETE FROM consultation_slots WHERE request_id=? AND status='AVAILABLE'").bind(requestId).run();
+      for(const startsAt of slots){ await env.DB.prepare("INSERT INTO consultation_slots(request_id,starts_at,status) VALUES(?,?,'AVAILABLE')").bind(requestId,startsAt).run(); }
+      await env.DB.prepare("UPDATE consultation_requests SET status='AVAILABILITY_SENT',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(requestId).run();
+      return json({ok:true});
+    }
+
+    if (path === "/api/admin/consultations" && method === "PUT") {
+      const body:any=await request.json(); const id=Number(body.id); const action=String(body.action||'');
+      if(!id) return error("Consultoria inválida.");
+      if(action==='meeting'){
+        await env.DB.prepare("UPDATE consultation_requests SET meeting_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(String(body.meetingUrl||'').trim()||null,id).run();
+      } else if(action==='complete') {
+        await env.DB.prepare("UPDATE consultation_requests SET status='COMPLETED',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='CONFIRMED'").bind(id).run();
+      } else if(action==='cancel') {
+        const current:any=await env.DB.prepare("SELECT asaas_payment_id,payment_status FROM consultation_requests WHERE id=?").bind(id).first();
+        if(current?.asaas_payment_id && !["RECEIVED","CONFIRMED","RECEIVED_IN_CASH"].includes(current.payment_status)){
+          try { await asaasRequest(env,`/payments/${current.asaas_payment_id}`,"DELETE"); } catch {}
+        }
+        await env.DB.prepare("UPDATE consultation_requests SET status='CANCELLED',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(id).run();
+        await env.DB.prepare("UPDATE consultation_slots SET status='CANCELLED' WHERE request_id=?").bind(id).run();
+      } else return error("Ação inválida.");
+      return json({ok:true});
     }
 
     const resource = path.split("/")[3];

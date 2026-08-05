@@ -9,3 +9,12 @@ IMPORTANTE:
 1. Apague os arquivos antigos do repositório antes de subir esta versão.
 2. Confirme que o novo commit aparece no GitHub.
 3. O log não pode continuar mostrando o commit antigo f417a13.
+
+ATUALIZAÇÃO CONSULTORIA ONLINE (OBRIGATÓRIO UMA ÚNICA VEZ)
+Antes de testar o novo módulo, aplique a migration 0004 no D1 de produção:
+
+npx wrangler d1 migrations apply afit-database --remote
+
+Depois confirme a execução da migration 0004_consultations.sql e faça o deploy normal do Pages.
+
+O módulo de Consultoria Online usa a mesma ASAAS_API_KEY e ASAAS_WEBHOOK_TOKEN já configuradas no projeto.

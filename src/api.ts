@@ -187,6 +187,13 @@ export const api = {
   completeWorkout: (exerciseId:number) => request<{ok:boolean}>("/api/student/workout-complete", {method:"POST", body:JSON.stringify({exerciseId})}),
   profilePhoto: (file:File) => { const body=new FormData(); body.append("file",file); return request<{url:string}>("/api/student/profile-photo", {method:"POST",body}); },
 
+  consultation: () => request<any>("/api/student/consultation"),
+  requestConsultation: () => request<any>("/api/student/consultation/request", {method:"POST", body:JSON.stringify({})}),
+  selectConsultationSlot: (slotId:number) => request<any>("/api/student/consultation/select", {method:"POST", body:JSON.stringify({slotId})}),
+  consultationAdminList: () => request<{items:any[]}>("/api/admin/consultations"),
+  consultationAdminSlots: (requestId:number, slots:string[]) => request<{ok:boolean}>("/api/admin/consultations/slots", {method:"POST", body:JSON.stringify({requestId,slots})}),
+  consultationAdminUpdate: (body:unknown) => request<{ok:boolean}>("/api/admin/consultations", {method:"PUT", body:JSON.stringify(body)}),
+
   adminSave: (
     resource: string,
     body: unknown,

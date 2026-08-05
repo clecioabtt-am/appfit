@@ -10,7 +10,7 @@ const plansFallback = [
     name: 'Plano Mensal',
     price: 59.9,
     period: 'mês',
-    description: 'Consultoria, treinos, dietas e acompanhamento.',
+    description: 'Treinos e acompanhamento pela plataforma.',
   },
   {
     id: 2,
@@ -373,6 +373,7 @@ function Shell({
     ['diets', 'Dietas'],
     ['students', 'Alunos'],
     ['assignments', 'Treinos personalizados'],
+    ['consultations', 'Consultorias'],
   ];
 
   const studentNav: Array<[string, string]> = [
@@ -381,12 +382,12 @@ function Shell({
     ['personalized', locked ? '🔒 Personalizado' : 'Treino personalizado'],
     ['profile', 'Meu perfil'],
     ['mytips', locked ? '🔒 Dicas' : 'Dicas'],
-    ['chat', locked ? '🔒 Consultoria' : 'Consultoria'],
+    ['chat', 'Consultoria'],
     ['plans', 'Planos'],
   ];
 
   const nav = user.role === 'admin' ? adminNav : studentNav;
-  const restrictedPages = ['workouts', 'personalized', 'mytips', 'chat'];
+  const restrictedPages = ['workouts', 'personalized', 'mytips'];
 
   let content: React.ReactNode;
 
@@ -512,7 +513,7 @@ function StudentLockedHome({
 
           <div>
             💬
-            <b>Consultoria</b>
+            <b>Consultoria avulsa</b>
           </div>
         </div>
 
@@ -665,7 +666,7 @@ function Plans({ refresh }: { refresh: () => void }) {
                 <li>Treinos de musculação e funcional</li>
                 <li>Vídeos explicativos dos exercícios</li>
                 <li>Dicas AFIT</li>
-                <li>Consultoria online</li>
+                <li>Consultoria online disponível como serviço avulso</li>
                 {isTrial && <li>Acesso completo por 20 dias</li>}
               </ul>
 
@@ -787,18 +788,45 @@ function Student({ page, user, refresh }: { page: string; user: User; refresh:()
     );
   }
 
-  if (page === 'chat') {
-    return (
-      <>
-        <Title h="Consultoria" s="Canal direto com seu personal" />
-        <div className="empty">
-          Chat preparado para integração em tempo real.
-        </div>
-      </>
-    );
-  }
+  if (page === 'chat') return <StudentConsultation user={user} />;
 
   return null;
+}
+
+function consultationStatus(status?:string){
+  return ({REQUESTED:'Solicitação enviada',AVAILABILITY_SENT:'Horários disponíveis',AWAITING_PAYMENT:'Aguardando pagamento',CONFIRMED:'Confirmada',COMPLETED:'Concluída',CANCELLED:'Cancelada'} as any)[status||'']||status||'';
+}
+function dateTimeBR(value?:string){ if(!value)return '-'; const d=new Date(value); return Number.isNaN(d.getTime())?value:d.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}); }
+
+function StudentConsultation({user}:{user:User}){
+  const [data,setData]=useState<any>({request:null,slots:[]}); const [msg,setMsg]=useState(''); const [busy,setBusy]=useState(false); const [selected,setSelected]=useState<any>(null);
+  const load=()=>api.consultation().then(setData).catch((e:any)=>setMsg(e.message));
+  useEffect(()=>{void load(); const t=setInterval(()=>void load(),15000); return()=>clearInterval(t);},[]);
+  const requestOne=async()=>{try{setBusy(true);setMsg('');await api.requestConsultation();setMsg('Solicitação enviada ao personal.');await load();}catch(e:any){setMsg(e.message)}finally{setBusy(false)}};
+  const pay=async()=>{if(!selected)return; try{setBusy(true);const r=await api.selectConsultationSlot(Number(selected.id));await load();if(r.invoiceUrl)window.open(r.invoiceUrl,'_blank');setSelected(null);}catch(e:any){setMsg(e.message)}finally{setBusy(false)}};
+  const r=data.request;
+  return <section><Title h="Consultoria Online" s="Atendimento individual com seu personal, com agendamento e pagamento pela plataforma"/>
+    {!r ? <div className="consultHero"><div className="consultIcon">💻</div><div><span className="miniTag">SERVIÇO AVULSO</span><h2>Consultoria individual</h2><p>Converse com seu personal para avaliação, orientação e acompanhamento personalizado.</p><div className="consultMeta"><span>⏱ Aproximadamente 60 min</span><span>💰 <b>R$ 300,00</b></span></div></div><button className="primary" disabled={busy} onClick={requestOne}>{busy?'Enviando...':'Solicitar consultoria'}</button></div>:
+    <div className="consultStack"><div className={`consultStatus status-${String(r.status).toLowerCase()}`}><small>Status da consultoria</small><b>{consultationStatus(r.status)}</b><span>Solicitada em {dateTimeBR(r.requestedAt)}</span></div>
+      {r.status==='REQUESTED'&&<div className="consultPanel"><h3>Solicitação recebida ✅</h3><p>Seu personal recebeu o pedido. Assim que os horários forem informados, eles aparecerão aqui.</p></div>}
+      {r.status==='AVAILABILITY_SENT'&&<div className="consultPanel"><h3>Escolha um horário</h3><p>Selecione uma das opções disponibilizadas pelo personal.</p><div className="slotGrid">{data.slots.filter((x:any)=>x.status==='AVAILABLE').map((x:any)=><button key={x.id} className="slotButton" onClick={()=>setSelected(x)}><b>{new Date(x.startsAt).toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'})}</b><span>{new Date(x.startsAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span><em>Agendar</em></button>)}</div></div>}
+      {r.status==='AWAITING_PAYMENT'&&<div className="consultPanel"><h3>Horário reservado</h3><div className="bookingSummary"><span>👤 {user.name}</span><span>📅 {dateTimeBR(r.selectedStartsAt)}</span><span>💻 Consultoria Online</span><strong>R$ 300,00</strong></div><div className="paymentPending">🟠 Aguardando confirmação do pagamento pelo Asaas.</div>{r.invoiceUrl&&<button className="primary" onClick={()=>window.open(r.invoiceUrl,'_blank')}>Pagar consultoria</button>}<button className="ghostCheck" onClick={load}>Verificar pagamento</button></div>}
+      {r.status==='CONFIRMED'&&<div className="consultPanel successPanel"><div className="successMark">✓</div><h2>Consultoria agendada com sucesso!</h2><p>Seu pagamento foi confirmado e o horário está reservado.</p><div className="bookingSummary"><span>👤 {user.name}</span><span>📅 {dateTimeBR(r.selectedStartsAt)}</span><span>💳 Pagamento confirmado · R$ 300,00</span></div>{r.meetingUrl?<button className="primary" onClick={()=>window.open(r.meetingUrl,'_blank')}>Entrar na consultoria</button>:<small>O link da reunião será disponibilizado pelo personal nesta página.</small>}</div>}
+      {r.status==='COMPLETED'&&<div className="consultPanel successPanel"><h3>Consultoria concluída</h3><p>Este atendimento foi marcado como realizado pelo seu personal.</p></div>}
+    </div>}
+    {msg&&<div className="notice">{msg}</div>}
+    {selected&&<div className="consultModal" onClick={()=>setSelected(null)}><article onClick={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setSelected(null)}>×</button><span className="miniTag">CONFIRMAR AGENDAMENTO</span><h2>Consultoria Online</h2><div className="bookingSummary"><span>👤 <b>{user.name}</b></span><span>📅 <b>{dateTimeBR(selected.startsAt)}</b></span><span>💻 Atendimento online</span></div><div className="consultPrice"><small>Valor da consultoria</small><strong>R$ 300,00</strong></div><p className="muted">O horário será confirmado automaticamente após a identificação do pagamento.</p><button className="primary" disabled={busy} onClick={pay}>{busy?'Gerando cobrança...':'Confirmar e pagar'}</button></article></div>}
+  </section>;
+}
+
+function ConsultationsAdmin(){
+ const [items,setItems]=useState<any[]>([]); const [msg,setMsg]=useState(''); const [editing,setEditing]=useState<any>(null); const [slots,setSlots]=useState<string[]>(['']); const [meeting,setMeeting]=useState('');
+ const load=()=>api.consultationAdminList().then(r=>setItems(r.items||[])).catch((e:any)=>setMsg(e.message)); useEffect(()=>{void load();},[]);
+ const send=async()=>{try{const clean=slots.filter(Boolean);await api.consultationAdminSlots(editing.id,clean);setMsg('Horários enviados ao aluno.');setEditing(null);setSlots(['']);await load();}catch(e:any){setMsg(e.message)}};
+ const update=async(id:number,action:string,extra:any={})=>{try{await api.consultationAdminUpdate({id,action,...extra});setMsg('Consultoria atualizada.');await load();}catch(e:any){setMsg(e.message)}};
+ return <section><Title h="Consultorias" s="Gerencie solicitações, horários, pagamentos e links das reuniões"/>{msg&&<div className="notice">{msg}</div>}<div className="consultAdminList">{items.length===0&&<div className="empty">Nenhuma solicitação de consultoria.</div>}{items.map(x=><article className="consultAdminCard" key={x.id}><div className="consultAdminHead"><div><span className="miniTag">#{x.id} · {consultationStatus(x.status)}</span><h3>{x.name}</h3><small>{x.email}{x.phone?` · ${x.phone}`:''}</small></div><strong>R$ {Number(x.price||300).toFixed(2).replace('.',',')}</strong></div><div className="consultAdminInfo"><span>Solicitada: {dateTimeBR(x.requestedAt)}</span>{x.selectedStartsAt&&<span>Agendada: <b>{dateTimeBR(x.selectedStartsAt)}</b></span>}<span>Pagamento: <b>{x.paymentStatus||'não gerado'}</b></span></div>{x.slots?.length>0&&<div className="adminSlots">{x.slots.filter((s:any)=>s.status!=='CANCELLED').map((s:any)=><span key={s.id}>{dateTimeBR(s.startsAt)} · {s.status}</span>)}</div>}<div className="consultActions">{['REQUESTED','AVAILABILITY_SENT'].includes(x.status)&&<button onClick={()=>{setEditing(x);setSlots(x.slots?.filter((s:any)=>s.status==='AVAILABLE').map((s:any)=>String(s.startsAt).slice(0,16))||[''])}}>Informar horários</button>}{x.status==='CONFIRMED'&&<><input placeholder="Link Google Meet / Zoom" defaultValue={x.meetingUrl||''} onChange={e=>setMeeting(e.target.value)}/><button onClick={()=>update(x.id,'meeting',{meetingUrl:meeting||x.meetingUrl||''})}>Salvar link</button><button className="okAction" onClick={()=>update(x.id,'complete')}>Concluir</button></>} {!['COMPLETED','CANCELLED'].includes(x.status)&&<button className="danger" onClick={()=>confirm('Cancelar esta consultoria?')&&update(x.id,'cancel')}>Cancelar</button>}</div></article>)}</div>
+ {editing&&<div className="consultModal" onClick={()=>setEditing(null)}><article onClick={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setEditing(null)}>×</button><span className="miniTag">DISPONIBILIDADE</span><h2>{editing.name}</h2><p>Informe uma ou mais datas e horários para o aluno escolher.</p><div className="slotEditor">{slots.map((v,i)=><div key={i}><input type="datetime-local" value={v} onChange={e=>setSlots(a=>a.map((x,j)=>j===i?e.target.value:x))}/>{slots.length>1&&<button onClick={()=>setSlots(a=>a.filter((_,j)=>j!==i))}>×</button>}</div>)}</div><button className="ghostCheck" onClick={()=>setSlots(a=>[...a,''])}>+ Adicionar horário</button><button className="primary" onClick={send}>Enviar horários ao aluno</button></article></div>}
+ </section>;
 }
 
 function ExerciseLibrary({ items, personalized=false }: { items: any[]; personalized?: boolean }) {
@@ -974,6 +1002,7 @@ function Admin({ page }: { page: string }) {
   }
 
   if (page === 'assignments') return <AssignmentAdmin />;
+  if (page === 'consultations') return <ConsultationsAdmin />;
 
   const map: any = {
     exercises: {
