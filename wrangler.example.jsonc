@@ -1,0 +1,7 @@
+{
+  "name": "wagner-noronha-afit",
+  "compatibility_date": "2026-05-01",
+  "pages_build_output_dir": "./dist",
+  "d1_databases": [{"binding":"DB", "database_name":"afit-database", "database_id":"COLOQUE_SEU_DATABASE_ID_AQUI"}],
+  "r2_buckets": [{"binding":"MEDIA", "bucket_name":"afit-media"}]
+}

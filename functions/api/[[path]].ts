@@ -1,852 +1,246 @@
-import {
-  type Env,
-  asaasRequest,
-  error,
-  hashPassword,
-  json,
-  readUser,
-  signToken,
-  verifyPassword,
-} from "../_lib/core";
+import {Env,json,fail,hashPassword,verifyPassword,signToken,readUser,ensureActive,storeFile,imageTypes,proofTypes,writeAudit,asText,today,normalizeDate} from '../_lib/core';
+type Context={request:Request;env:Env;params:{path?:string|string[]}};
+class HttpError extends Error {constructor(public status:number,message:string){super(message);}}
+const bad=(message:string,status=400):never=>{throw new HttpError(status,message);};
+const auth=(u:any,role?:'admin'|'student')=>{if(!u)bad('Faça login para continuar.',401);if(role&&u.role!==role)bad('Acesso não autorizado.',403);return u;};
+const pathFrom=(p:Context['params'])=>'/api/'+(Array.isArray(p.path)?p.path.join('/'):p.path||'');
+const sid=(n:string)=>{const v=Number(n);if(!Number.isSafeInteger(v)||v<=0)bad('Identificador inválido.');return v;};
+const data=async (req:Request)=>{try{return await req.json()}catch{bad('Envie dados JSON válidos.');}};
+const fetchPlan=async (env:Env,id:number)=>env.DB.prepare('SELECT id,name,price,period,duration_days AS durationDays,description,active FROM plans WHERE id=?').bind(id).first();
+const fetchPix=async(env:Env,id:number)=>env.DB.prepare('SELECT plan_id AS planId,pix_key AS pixKey,pix_type AS pixType,recipient_name AS recipientName,instructions FROM plan_pix_config WHERE plan_id=?').bind(id).first();
+const getSettings=async(env:Env)=>env.DB.prepare('SELECT brand_name AS brandName,logo_url AS logoUrl,hero_image_url AS heroImageUrl,inside_image_url AS insideImageUrl,hero_title AS heroTitle,hero_subtitle AS heroSubtitle,consultation_pix_key AS consultationPixKey,consultation_pix_recipient AS consultationPixRecipient FROM app_settings WHERE id=1').first();
+const getRequests=async(env:Env,where='',args:any[]=[])=>env.DB.prepare(`SELECT r.id,r.student_id AS studentId,u.name AS studentName,u.email AS studentEmail,u.phone AS studentPhone,r.plan_id AS planId,r.plan_name AS planName,r.price,r.duration_days AS durationDays,r.pix_key_snapshot AS pixKey,r.recipient_snapshot AS recipientName,r.status,r.proof_name AS proofName,r.requested_at AS requestedAt,r.proof_sent_at AS proofSentAt,r.decided_at AS decidedAt,r.decision_note AS decisionNote,r.activated_until AS activatedUntil FROM plan_requests r JOIN users u ON u.id=r.student_id ${where} ORDER BY r.id DESC`).bind(...args).all();
+const sendPrivateFile=async(env:Env,key:string,mime:string,name:string)=>{if(!key.startsWith('private/proofs/'))return fail('Arquivo inválido.',403);const obj=await env.MEDIA.get(key);if(!obj)return fail('Comprovante não encontrado.',404);return new Response(obj.body,{headers:{'content-type':mime||'application/octet-stream','content-disposition':`inline; filename="${String(name||'comprovante').replace(/["\r\n]/g,'_')}"`,'cache-control':'no-store','x-content-type-options':'nosniff'}});};
+const parseProof=async(req:Request,env:Env,ownerId:number,kind:string)=>{const form=await req.formData();const file=form.get('file');if(!(file instanceof File))bad('Selecione o comprovante.');try{return await storeFile(env,file,`private/proofs/${kind}/${ownerId}`,proofTypes,8*1024*1024)}catch(e:any){bad(e.message||'Arquivo inválido.');}};
+const safeDate=(value:string)=>{const dt=new Date(value);return Number.isFinite(dt.getTime())?dt.toISOString():null;};
+const isStudent=(u:any)=>u?.role==='student';
+const checkPlanStatus=async(env:Env,u:any)=>{const active=await ensureActive(env,u);return {active,subscriptionStatus:active?'ACTIVE':'INACTIVE',subscriptionUntil:u.subscription_until};};
 
-type Context = {
-  request: Request;
-  env: Env;
-  params: { path?: string[] | string };
-};
-
-function normalizedPath(context: Context): string {
-  const value = context.params.path;
-  const suffix = Array.isArray(value) ? value.join("/") : value || "";
-  return `/api/${suffix}`.replace(/\/+$/, "") || "/api";
-}
-
-async function requireUser(request: Request, env: Env): Promise<any> {
-  return readUser(request, env);
-}
-
-function hasExpired(until?: string | null): boolean {
-  if (!until) return false;
-  const timestamp = Date.parse(until);
-  return Number.isFinite(timestamp) && timestamp <= Date.now();
-}
-
-async function normalizeStudentAccess(env: Env, record: any): Promise<any> {
-  if (
-    record &&
-    record.role === "student" &&
-    record.subscription_status === "ACTIVE" &&
-    hasExpired(record.subscription_until)
-  ) {
-    await env.DB.prepare(
-      "UPDATE users SET subscription_status = 'INACTIVE' WHERE id = ?",
-    )
-      .bind(record.id)
-      .run();
-
-    return {
-      ...record,
-      subscription_status: "INACTIVE",
-    };
+export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
+ const path=pathFrom(params);const method=request.method.toUpperCase();const url=new URL(request.url); const seg=path.split('/').filter(Boolean);
+ try{
+  if(path==='/api/health')return json({ok:true,service:'Wagner Noronha - PWA Pix Manual 4.0',asaas:false});
+  if(path==='/api/public/settings'&&method==='GET'){
+   const s=await getSettings(env);return json({settings:{brandName:s.brandName,logoUrl:s.logoUrl,heroImageUrl:s.heroImageUrl,insideImageUrl:s.insideImageUrl,heroTitle:s.heroTitle,heroSubtitle:s.heroSubtitle}});
   }
-
-  return record;
-}
-
-export const onRequest = async (context: Context): Promise<Response> => {
-  const { request, env } = context;
-  const path = normalizedPath(context);
-  const method = request.method.toUpperCase();
-
-  try {
-    if (path === "/api/health") {
-      return json({ ok: true, service: "AFIT Pages Functions" });
-    }
-
-    if (path === "/api/setup/status" && method === "GET") {
-      const admin = await env.DB.prepare(
-        "SELECT id FROM users WHERE role = 'admin' LIMIT 1",
-      ).first();
-
-      return json({ configured: Boolean(admin) });
-    }
-
-    if (path === "/api/setup/admin" && method === "POST") {
-      if (request.headers.get("x-setup-token") !== env.SETUP_TOKEN) {
-        return error("Token de configuração inválido.", 403);
-      }
-
-      const existing = await env.DB.prepare(
-        "SELECT id FROM users WHERE role = 'admin' LIMIT 1",
-      ).first();
-
-      if (existing) {
-        return error("O administrador inicial já foi configurado.", 409);
-      }
-
-      const body: any = await request.json();
-
-      if (!body.name || !body.email || !body.password || body.password.length < 8) {
-        return error(
-          "Informe nome, e-mail e senha com pelo menos 8 caracteres.",
-        );
-      }
-
-      await env.DB.prepare(
-        "INSERT INTO users(name,email,password_hash,role,subscription_status) VALUES(?,?,?,?,?)",
-      )
-        .bind(
-          String(body.name).trim(),
-          String(body.email).trim().toLowerCase(),
-          await hashPassword(body.password),
-          "admin",
-          "ACTIVE",
-        )
-        .run();
-
-      return json({ ok: true }, 201);
-    }
-
-    if (path === "/api/auth/register" && method === "POST") {
-      const body: any = await request.json();
-
-      if (!body.name || !body.email || !body.password || body.password.length < 8) {
-        return error(
-          "Informe nome, e-mail e senha com pelo menos 8 caracteres.",
-        );
-      }
-
-      try {
-        const created: any = await env.DB.prepare(
-          "INSERT INTO users(name,email,password_hash,role,cpf,phone,subscription_status) VALUES(?,?,?,?,?,?,?) RETURNING id",
-        )
-          .bind(
-            String(body.name).trim(),
-            String(body.email).trim().toLowerCase(),
-            await hashPassword(body.password),
-            "student",
-            body.cpf || null,
-            body.phone || null,
-            "INACTIVE",
-          )
-          .first();
-
-        const user = {
-          id: created.id,
-          name: String(body.name).trim(),
-          email: String(body.email).trim().toLowerCase(),
-          role: "student",
-          subscriptionStatus: "INACTIVE",
-        };
-
-        return json(
-          {
-            token: await signToken(user, env.JWT_SECRET),
-            user,
-          },
-          201,
-        );
-      } catch {
-        return error("Este e-mail já está cadastrado.", 409);
-      }
-    }
-
-    if (path === "/api/auth/login" && method === "POST") {
-      const body: any = await request.json();
-
-      let record: any = await env.DB.prepare(
-        "SELECT * FROM users WHERE email = ?",
-      )
-        .bind(String(body.email || "").trim().toLowerCase())
-        .first();
-
-      if (
-        !record ||
-        !(await verifyPassword(
-          String(body.password || ""),
-          record.password_hash,
-        ))
-      ) {
-        return error("E-mail ou senha inválidos.", 401);
-      }
-
-      record = await normalizeStudentAccess(env, record);
-
-      const user = {
-        id: record.id,
-        name: record.name,
-        email: record.email,
-        role: record.role,
-        subscriptionStatus: record.subscription_status,
-      };
-
-      return json({
-        token: await signToken(user, env.JWT_SECRET),
-        user,
-      });
-    }
-
-    if (path === "/api/plans" && method === "GET") {
-      const rows = await env.DB.prepare(
-        "SELECT id,name,price,period,description,duration_days FROM plans WHERE active = 1 ORDER BY price ASC,id ASC",
-      ).all();
-
-      return json({ plans: rows.results });
-    }
-
-    if (path === "/api/asaas/webhook" && method === "POST") {
-      if (
-        !env.ASAAS_WEBHOOK_TOKEN ||
-        request.headers.get("asaas-access-token") !== env.ASAAS_WEBHOOK_TOKEN
-      ) {
-        return error("Webhook não autorizado.", 401);
-      }
-
-      const event: any = await request.json();
-      const payment = event.payment;
-
-      if (payment?.id) {
-        const consultation: any = await env.DB.prepare(
-          "SELECT id FROM consultation_requests WHERE asaas_payment_id = ?",
-        ).bind(payment.id).first();
-
-        if (consultation) {
-          const paid = ["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"].includes(payment.status);
-          await env.DB.prepare(
-            `UPDATE consultation_requests
-             SET payment_status = ?,
-                 status = CASE WHEN ? = 1 THEN 'CONFIRMED' ELSE status END,
-                 paid_at = CASE WHEN ? = 1 THEN COALESCE(paid_at,CURRENT_TIMESTAMP) ELSE paid_at END,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-          ).bind(payment.status, paid ? 1 : 0, paid ? 1 : 0, consultation.id).run();
-          return new Response(null, { status: 204 });
-        }
-
-        await env.DB.prepare(
-          "UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE asaas_payment_id = ?",
-        )
-          .bind(payment.status, payment.id)
-          .run();
-
-        if (
-          ["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"].includes(
-            payment.status,
-          )
-        ) {
-          const row: any = await env.DB.prepare(
-            "SELECT user_id,plan_id FROM payments WHERE asaas_payment_id = ?",
-          )
-            .bind(payment.id)
-            .first();
-
-          if (row) {
-            const plan: any = await env.DB.prepare(
-              "SELECT duration_days FROM plans WHERE id = ?",
-            )
-              .bind(row.plan_id)
-              .first();
-
-            const until = new Date(
-              Date.now() + Number(plan?.duration_days || 30) * 86_400_000,
-            ).toISOString();
-
-            await env.DB.prepare(
-              "UPDATE users SET subscription_status = 'ACTIVE', subscription_until = ? WHERE id = ?",
-            )
-              .bind(until, row.user_id)
-              .run();
-          }
-        }
-      }
-
-      return new Response(null, { status: 204 });
-    }
-
-    if (path === "/api/auth/reset-password" && method === "POST") {
-      const body: any = await request.json();
-      const email = String(body.email || "").trim().toLowerCase();
-      const cpf5 = String(body.cpf5 || "").replace(/\D/g, "").slice(0, 5);
-      const password = String(body.password || "");
-      if (!email || cpf5.length !== 5 || password.length < 8) return error("Informe e-mail, os 5 primeiros números do CPF e uma nova senha com 8 caracteres.");
-      const record: any = await env.DB.prepare("SELECT id,cpf FROM users WHERE email=? AND role='student'").bind(email).first();
-      const stored = String(record?.cpf || "").replace(/\D/g, "");
-      if (!record || stored.slice(0,5) !== cpf5) return error("Dados de recuperação não conferem.", 403);
-      await env.DB.prepare("UPDATE users SET password_hash=? WHERE id=?").bind(await hashPassword(password), record.id).run();
-      return json({ ok: true });
-    }
-
-    const user = await requireUser(request, env);
-
-    if (!user) {
-      return error("Não autenticado.", 401);
-    }
-
-    if (path === "/api/auth/me" && method === "GET") {
-      let record: any = await env.DB.prepare(
-        "SELECT id,name,email,role,subscription_status,subscription_until,trial_used,profile_image_url FROM users WHERE id = ?",
-      )
-        .bind(user.id)
-        .first();
-
-      if (!record) {
-        return error("Usuário não encontrado.", 404);
-      }
-
-      record = await normalizeStudentAccess(env, record);
-
-      return json({
-        user: {
-          id: record.id,
-          name: record.name,
-          email: record.email,
-          role: record.role,
-          subscriptionStatus: record.subscription_status,
-          subscriptionUntil: record.subscription_until,
-          trialUsed: Boolean(record.trial_used),
-          profileImageUrl: record.profile_image_url || undefined,
-        },
-      });
-    }
-
-    if (path === "/api/student/consultation" && method === "GET") {
-      if (user.role !== "student") return error("Operação exclusiva para alunos.", 403);
-      const req: any = await env.DB.prepare(
-        `SELECT cr.id,cr.status,cr.price,cr.selected_slot_id AS selectedSlotId,
-                cr.payment_status AS paymentStatus,cr.invoice_url AS invoiceUrl,
-                cr.meeting_url AS meetingUrl,cr.requested_at AS requestedAt,
-                cs.starts_at AS selectedStartsAt
-         FROM consultation_requests cr
-         LEFT JOIN consultation_slots cs ON cs.id=cr.selected_slot_id
-         WHERE cr.student_id=? AND cr.status!='CANCELLED'
-         ORDER BY cr.id DESC LIMIT 1`,
-      ).bind(user.id).first();
-      if (!req) return json({ request: null, slots: [] });
-      const slots = await env.DB.prepare(
-        `SELECT id,starts_at AS startsAt,status FROM consultation_slots
-         WHERE request_id=? AND status!='CANCELLED' ORDER BY starts_at`,
-      ).bind(req.id).all();
-      return json({ request: req, slots: slots.results });
-    }
-
-    if (path === "/api/student/consultation/request" && method === "POST") {
-      if (user.role !== "student") return error("Operação exclusiva para alunos.", 403);
-      const existing: any = await env.DB.prepare(
-        `SELECT id,status FROM consultation_requests WHERE student_id=?
-         AND status IN ('REQUESTED','AVAILABILITY_SENT','AWAITING_PAYMENT','CONFIRMED')
-         ORDER BY id DESC LIMIT 1`,
-      ).bind(user.id).first();
-      if (existing) return error("Você já possui uma solicitação de consultoria em andamento.", 409);
-      const created: any = await env.DB.prepare(
-        "INSERT INTO consultation_requests(student_id,price,status) VALUES(?,300,'REQUESTED') RETURNING id",
-      ).bind(user.id).first();
-      return json({ ok:true, id:created.id, status:'REQUESTED' }, 201);
-    }
-
-    if (path === "/api/student/consultation/select" && method === "POST") {
-      if (user.role !== "student") return error("Operação exclusiva para alunos.", 403);
-      const body:any = await request.json();
-      const slotId = Number(body.slotId);
-      const slot:any = await env.DB.prepare(
-        `SELECT cs.id,cs.request_id,cs.starts_at,cr.status,cr.price,cr.student_id
-         FROM consultation_slots cs JOIN consultation_requests cr ON cr.id=cs.request_id
-         WHERE cs.id=? AND cr.student_id=? AND cs.status='AVAILABLE'`,
-      ).bind(slotId,user.id).first();
-      if (!slot || !['AVAILABILITY_SENT','REQUESTED'].includes(slot.status)) return error("Este horário não está mais disponível.",409);
-
-      let student:any = await env.DB.prepare("SELECT * FROM users WHERE id=?").bind(user.id).first();
-      let customerId=student.asaas_customer_id;
-      if(!customerId){
-        const customer=await asaasRequest(env,"/customers","POST",{name:student.name,cpfCnpj:student.cpf,email:student.email,mobilePhone:student.phone,externalReference:String(student.id)});
-        customerId=customer.id;
-        await env.DB.prepare("UPDATE users SET asaas_customer_id=? WHERE id=?").bind(customerId,user.id).run();
-      }
-      const dueDate=new Date(Date.now()+3*86_400_000).toISOString().slice(0,10);
-      const payment=await asaasRequest(env,"/payments","POST",{
-        customer:customerId,billingType:"UNDEFINED",value:300,dueDate,
-        description:`AFIT - Consultoria Online - ${slot.starts_at}`,
-        externalReference:`consultation:${slot.request_id}`,
-      });
-      const invoiceUrl=payment.invoiceUrl||payment.bankSlipUrl;
-      await env.DB.batch([
-        env.DB.prepare("UPDATE consultation_slots SET status='SELECTED' WHERE id=?").bind(slot.id),
-        env.DB.prepare("UPDATE consultation_slots SET status='CANCELLED' WHERE request_id=? AND id<>?").bind(slot.request_id,slot.id),
-        env.DB.prepare(`UPDATE consultation_requests SET selected_slot_id=?,status='AWAITING_PAYMENT',asaas_payment_id=?,payment_status=?,invoice_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(slot.id,payment.id,payment.status,invoiceUrl,slot.request_id),
-      ]);
-      return json({ invoiceUrl,paymentId:payment.id,status:'AWAITING_PAYMENT' });
-    }
-
-    if (path === "/api/payments/checkout" && method === "POST") {
-      if (user.role !== "student") {
-        return error("Operação exclusiva para alunos.", 403);
-      }
-
-      const body: any = await request.json();
-
-      const plan: any = await env.DB.prepare(
-        "SELECT * FROM plans WHERE id = ? AND active = 1",
-      )
-        .bind(Number(body.planId))
-        .first();
-
-      let student: any = await env.DB.prepare(
-        "SELECT * FROM users WHERE id = ?",
-      )
-        .bind(user.id)
-        .first();
-
-      if (!plan || !student) {
-        return error("Plano ou aluno inválido.");
-      }
-
-      student = await normalizeStudentAccess(env, student);
-
-      const isTrial =
-        Number(plan.price) === 0 &&
-        Number(plan.duration_days) === 20 &&
-        String(plan.name).trim().toLowerCase() === "plano teste";
-
-      if (isTrial) {
-        if (Number(student.trial_used || 0) === 1) {
-          return error(
-            "O Plano Teste de 20 dias já foi utilizado por esta conta.",
-            409,
-          );
-        }
-
-        const until = new Date(
-          Date.now() + 20 * 86_400_000,
-        ).toISOString();
-
-        await env.DB.prepare(
-          `UPDATE users
-           SET subscription_status = 'ACTIVE',
-               subscription_until = ?,
-               trial_used = 1
-           WHERE id = ?`,
-        )
-          .bind(until, user.id)
-          .run();
-
-        return json({
-          trial: true,
-          status: "ACTIVE",
-          until,
-          message: "Plano Teste ativado por 20 dias.",
-        });
-      }
-
-      let customerId = student.asaas_customer_id;
-
-      if (!customerId) {
-        const customer = await asaasRequest(
-          env,
-          "/customers",
-          "POST",
-          {
-            name: student.name,
-            cpfCnpj: student.cpf,
-            email: student.email,
-            mobilePhone: student.phone,
-            externalReference: String(student.id),
-          },
-        );
-
-        customerId = customer.id;
-
-        await env.DB.prepare(
-          "UPDATE users SET asaas_customer_id = ? WHERE id = ?",
-        )
-          .bind(customerId, user.id)
-          .run();
-      }
-
-      const dueDate = new Date(Date.now() + 3 * 86_400_000)
-        .toISOString()
-        .slice(0, 10);
-
-      const payment = await asaasRequest(
-        env,
-        "/payments",
-        "POST",
-        {
-          customer: customerId,
-          billingType: "UNDEFINED",
-          value: Number(plan.price),
-          dueDate,
-          description: `AFIT - ${plan.name}`,
-          externalReference: `user:${user.id}|plan:${plan.id}`,
-        },
-      );
-
-      const invoiceUrl =
-        payment.invoiceUrl || payment.bankSlipUrl;
-
-      await env.DB.prepare(
-        "INSERT INTO payments(user_id,plan_id,asaas_payment_id,status,value,invoice_url) VALUES(?,?,?,?,?,?)",
-      )
-        .bind(
-          user.id,
-          plan.id,
-          payment.id,
-          payment.status,
-          plan.price,
-          invoiceUrl,
-        )
-        .run();
-
-      return json({
-        invoiceUrl,
-        paymentId: payment.id,
-      });
-    }
-
-    if (path === "/api/payments/status" && method === "GET") {
-      let record: any = await env.DB.prepare(
-        "SELECT id,role,subscription_status,subscription_until,trial_used FROM users WHERE id = ?",
-      )
-        .bind(user.id)
-        .first();
-
-      record = await normalizeStudentAccess(env, record);
-
-      return json({
-        status: record?.subscription_status,
-        until: record?.subscription_until,
-        trialUsed: Boolean(record?.trial_used),
-      });
-    }
-
-    if (path === "/api/student/content" && method === "GET") {
-      let record: any = await env.DB.prepare(
-        "SELECT id,role,subscription_status,subscription_until FROM users WHERE id = ?",
-      )
-        .bind(user.id)
-        .first();
-
-      record = await normalizeStudentAccess(env, record);
-
-      if (record?.subscription_status !== "ACTIVE") {
-        return error(
-          "Seu acesso está inativo ou o período de teste terminou.",
-          402,
-        );
-      }
-
-      const [exercises, tips] = await Promise.all([
-        env.DB.prepare(
-          `SELECT id,name,training_category AS trainingCategory,muscle_group AS muscleGroup,
-          level,execution_mode AS executionMode,description,objective,instructions,benefits,
-          common_errors AS commonErrors,equipment,sets,reps,duration,rest,tags,
-          video_url AS videoUrl,image_url AS imageUrl
-          FROM exercises WHERE active = 1 ORDER BY training_category,name`,
-        ).all(),
-
-        env.DB.prepare(
-          "SELECT id,title,description,category,video_url AS videoUrl,image_url AS imageUrl FROM tips WHERE active = 1 ORDER BY id DESC",
-        ).all(),
-      ]);
-
-      const assignments = await env.DB.prepare(`SELECT wa.id,wa.weekday,wa.sort_order AS sortOrder,e.id AS exerciseId,e.name,e.training_category AS trainingCategory,e.muscle_group AS muscleGroup,e.level,e.execution_mode AS executionMode,e.description,e.objective,e.instructions,e.benefits,e.common_errors AS commonErrors,e.equipment,e.sets,e.reps,e.duration,e.rest,e.tags,e.video_url AS videoUrl,e.image_url AS imageUrl FROM workout_assignments wa JOIN exercises e ON e.id=wa.exercise_id WHERE wa.student_id=? AND e.active=1 ORDER BY wa.weekday,wa.sort_order,wa.id`).bind(user.id).all();
-      const completions = await env.DB.prepare("SELECT exercise_id AS exerciseId,completed_date AS completedDate FROM workout_completions WHERE user_id=? AND completed_date >= date('now','-7 day')").bind(user.id).all();
-      return json({ exercises: exercises.results, tips: tips.results, diet: [], assignments: assignments.results, completions: completions.results });
-    }
-
-    if (path === "/api/student/profile-photo" && method === "POST") {
-      const formData = await request.formData(); const file = formData.get("file");
-      if (!(file instanceof File) || !String(file.type).startsWith("image/")) return error("Selecione uma imagem válida.");
-      if (file.size > 8 * 1024 * 1024) return error("A foto deve ter no máximo 8 MB.");
-      const key = `profiles/${user.id}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
-      await env.MEDIA.put(key, file.stream(), { httpMetadata: { contentType: file.type } });
-      const url = `/media/${encodeURIComponent(key)}`;
-      await env.DB.prepare("UPDATE users SET profile_image_url=? WHERE id=?").bind(url,user.id).run();
-      return json({ url });
-    }
-
-    if (path === "/api/student/workout-complete" && method === "POST") {
-      const body:any=await request.json(); const exerciseId=Number(body.exerciseId);
-      await env.DB.prepare("INSERT OR IGNORE INTO workout_completions(user_id,exercise_id,completed_date) VALUES(?,?,date('now'))").bind(user.id,exerciseId).run();
-      return json({ok:true});
-    }
-
-    if (!path.startsWith("/api/admin/")) {
-      return error("Rota não encontrada.", 404);
-    }
-
-    if (user.role !== "admin") {
-      return error("Acesso restrito ao administrador.", 403);
-    }
-
-    if (path === "/api/admin/consultations" && method === "GET") {
-      const rows = await env.DB.prepare(
-        `SELECT cr.id,cr.student_id AS studentId,u.name,u.email,u.phone,cr.status,cr.price,
-                cr.payment_status AS paymentStatus,cr.invoice_url AS invoiceUrl,
-                cr.meeting_url AS meetingUrl,cr.requested_at AS requestedAt,
-                cr.selected_slot_id AS selectedSlotId,cs.starts_at AS selectedStartsAt
-         FROM consultation_requests cr JOIN users u ON u.id=cr.student_id
-         LEFT JOIN consultation_slots cs ON cs.id=cr.selected_slot_id
-         ORDER BY CASE cr.status WHEN 'REQUESTED' THEN 0 WHEN 'AVAILABILITY_SENT' THEN 1 WHEN 'AWAITING_PAYMENT' THEN 2 WHEN 'CONFIRMED' THEN 3 ELSE 4 END, cr.id DESC`,
-      ).all();
-      for (const r of rows.results as any[]) {
-        const slots=await env.DB.prepare("SELECT id,starts_at AS startsAt,status FROM consultation_slots WHERE request_id=? ORDER BY starts_at").bind(r.id).all();
-        r.slots=slots.results;
-      }
-      return json({items:rows.results});
-    }
-
-    if (path === "/api/admin/consultations/slots" && method === "POST") {
-      const body:any=await request.json(); const requestId=Number(body.requestId);
-      const slots=(Array.isArray(body.slots)?body.slots:[]).map((x:any)=>String(x).trim()).filter(Boolean);
-      if(!requestId||!slots.length) return error("Informe pelo menos uma data e horário.");
-      const cr:any=await env.DB.prepare("SELECT id,status FROM consultation_requests WHERE id=?").bind(requestId).first();
-      if(!cr||['CONFIRMED','COMPLETED','CANCELLED'].includes(cr.status)) return error("Solicitação inválida para envio de horários.",409);
-      await env.DB.prepare("DELETE FROM consultation_slots WHERE request_id=? AND status='AVAILABLE'").bind(requestId).run();
-
-      // Compatibilidade com bancos D1 criados por versões anteriores do módulo de consultoria.
-      // A estrutura antiga possuía available_date/available_time como NOT NULL; a atual usa starts_at.
-      const slotColumns = await env.DB.prepare("PRAGMA table_info(consultation_slots)").all();
-      const slotColumnNames = new Set((slotColumns.results as any[]).map((c:any)=>String(c.name)));
-      const hasLegacySlotColumns = slotColumnNames.has('available_date') && slotColumnNames.has('available_time');
-
-      for(const startsAt of slots){
-        if(hasLegacySlotColumns){
-          const normalized=String(startsAt).trim();
-          const availableDate=normalized.slice(0,10);
-          const availableTime=normalized.length>=16 ? normalized.slice(11,16) : normalized.slice(11);
-          await env.DB.prepare(
-            "INSERT INTO consultation_slots(request_id,available_date,available_time,starts_at,status) VALUES(?,?,?,?,'AVAILABLE')"
-          ).bind(requestId,availableDate,availableTime,normalized).run();
-        } else {
-          await env.DB.prepare(
-            "INSERT INTO consultation_slots(request_id,starts_at,status) VALUES(?,?,'AVAILABLE')"
-          ).bind(requestId,startsAt).run();
-        }
-      }
-      await env.DB.prepare("UPDATE consultation_requests SET status='AVAILABILITY_SENT',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(requestId).run();
-      return json({ok:true});
-    }
-
-    if (path === "/api/admin/consultations" && method === "PUT") {
-      const body:any=await request.json(); const id=Number(body.id); const action=String(body.action||'');
-      if(!id) return error("Consultoria inválida.");
-      if(action==='meeting'){
-        await env.DB.prepare("UPDATE consultation_requests SET meeting_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(String(body.meetingUrl||'').trim()||null,id).run();
-      } else if(action==='complete') {
-        await env.DB.prepare("UPDATE consultation_requests SET status='COMPLETED',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='CONFIRMED'").bind(id).run();
-      } else if(action==='cancel') {
-        const current:any=await env.DB.prepare("SELECT asaas_payment_id,payment_status FROM consultation_requests WHERE id=?").bind(id).first();
-        if(current?.asaas_payment_id && !["RECEIVED","CONFIRMED","RECEIVED_IN_CASH"].includes(current.payment_status)){
-          try { await asaasRequest(env,`/payments/${current.asaas_payment_id}`,"DELETE"); } catch {}
-        }
-        await env.DB.prepare("UPDATE consultation_requests SET status='CANCELLED',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(id).run();
-        await env.DB.prepare("UPDATE consultation_slots SET status='CANCELLED' WHERE request_id=?").bind(id).run();
-      } else return error("Ação inválida.");
-      return json({ok:true});
-    }
-
-    const resource = path.split("/")[3];
-
-    if (resource === "upload" && method === "POST") {
-      const formData = await request.formData();
-      const file = formData.get("file");
-
-      if (!(file instanceof File)) {
-        return error("Selecione um arquivo válido.");
-      }
-
-      if (file.size > 95 * 1024 * 1024) {
-        return error(
-          "Neste modo de upload, o arquivo deve ter no máximo 95 MB.",
-        );
-      }
-
-      const safeName = file.name.replace(
-        /[^a-zA-Z0-9._-]/g,
-        "_",
-      );
-
-      const key =
-        `uploads/${new Date().toISOString().slice(0, 10)}/` +
-        `${crypto.randomUUID()}-${safeName}`;
-
-      await env.MEDIA.put(key, file.stream(), {
-        httpMetadata: {
-          contentType:
-            file.type || "application/octet-stream",
-        },
-      });
-
-      return json(
-        {
-          key,
-          url: `/media/${encodeURIComponent(key)}`,
-        },
-        201,
-      );
-    }
-
-    const definitions: Record<string, any> = {
-      exercises: {
-        select: `SELECT id,name,training_category AS trainingCategory,muscle_group AS muscleGroup,
-          level,execution_mode AS executionMode,description,objective,instructions,benefits,
-          common_errors AS commonErrors,equipment,sets,reps,duration,rest,tags,
-          video_url AS videoUrl,image_url AS imageUrl,active
-          FROM exercises ORDER BY id DESC`,
-
-        insert: `INSERT INTO exercises(
-          name,training_category,muscle_group,level,execution_mode,description,objective,
-          instructions,benefits,common_errors,equipment,sets,reps,duration,rest,tags,
-          video_url,image_url
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-
-        values: (body: any) => [
-          body.name,
-          body.trainingCategory || "Musculação",
-          body.muscleGroup || null,
-          body.level || "Iniciante",
-          body.executionMode || "Repetições",
-          body.description || null,
-          body.objective || null,
-          body.instructions || null,
-          body.benefits || null,
-          body.commonErrors || null,
-          body.equipment || null,
-          Number(body.sets || 0),
-          body.reps || null,
-          body.duration || null,
-          body.rest || null,
-          body.tags || null,
-          body.videoUrl || null,
-          body.imageUrl || null,
-        ],
-      },
-
-      tips: {
-        select:
-          "SELECT id,title,description,category,video_url AS videoUrl,image_url AS imageUrl,active FROM tips ORDER BY id DESC",
-
-        insert:
-          "INSERT INTO tips(title,description,category,video_url,image_url) VALUES(?,?,?,?,?)",
-
-        values: (body: any) => [
-          body.title,
-          body.description || null,
-          body.category || null,
-          body.videoUrl || null,
-          body.imageUrl || null,
-        ],
-      },
-
-      diets: {
-        select:
-          "SELECT d.id,d.time,d.title,d.description,u.email FROM diet_items d JOIN users u ON u.id=d.user_id ORDER BY d.id DESC",
-
-        insert:
-          "INSERT INTO diet_items(user_id,time,title,description) SELECT id,?,?,? FROM users WHERE email=? AND role='student'",
-
-        values: (body: any) => [
-          body.time || null,
-          body.title,
-          body.description || null,
-          String(body.studentEmail || "")
-            .trim()
-            .toLowerCase(),
-        ],
-      },
-
-      students: {
-        select:
-          `SELECT u.id,u.name,u.email,u.cpf,u.phone,u.profile_image_url AS profileImageUrl,u.subscription_status,u.subscription_until,u.trial_used,u.created_at,
-          (SELECT p.name FROM payments py JOIN plans p ON p.id=py.plan_id WHERE py.user_id=u.id AND py.status IN ('RECEIVED','CONFIRMED','RECEIVED_IN_CASH') ORDER BY py.id DESC LIMIT 1) AS paid_plan,
-          (SELECT py.status FROM payments py WHERE py.user_id=u.id ORDER BY py.id DESC LIMIT 1) AS last_payment_status
-          FROM users u WHERE u.role='student' ORDER BY u.id DESC`,
-      },
-    };
-
-    if (resource === "exercises" && method === "PUT") {
-      const body:any=await request.json(); if(!body.id) return error("Exercício inválido.");
-      await env.DB.prepare(`UPDATE exercises SET name=?,training_category=?,muscle_group=?,level=?,execution_mode=?,description=?,objective=?,instructions=?,benefits=?,common_errors=?,equipment=?,sets=?,reps=?,duration=?,rest=?,tags=?,video_url=?,image_url=? WHERE id=?`).bind(body.name,body.trainingCategory||"Musculação",body.muscleGroup||null,body.level||"Iniciante",body.executionMode||"Repetições",body.description||null,body.objective||null,body.instructions||null,body.benefits||null,body.commonErrors||null,body.equipment||null,Number(body.sets||0),body.reps||null,body.duration||null,body.rest||null,body.tags||null,body.videoUrl||null,body.imageUrl||null,Number(body.id)).run(); return json({ok:true});
-    }
-    if ((resource === "exercises" || resource === "students") && method === "DELETE") {
-      const id=Number(new URL(request.url).searchParams.get("id")); if(!id) return error("ID inválido.");
-      if(resource==="students") { await env.DB.prepare("DELETE FROM workout_assignments WHERE student_id=?").bind(id).run(); await env.DB.prepare("DELETE FROM workout_completions WHERE user_id=?").bind(id).run(); await env.DB.prepare("DELETE FROM diet_items WHERE user_id=?").bind(id).run(); await env.DB.prepare("DELETE FROM payments WHERE user_id=?").bind(id).run(); await env.DB.prepare("DELETE FROM users WHERE id=? AND role='student'").bind(id).run(); }
-      else await env.DB.prepare("DELETE FROM exercises WHERE id=?").bind(id).run();
-      return json({ok:true});
-    }
-    if (resource === "assignments" && method === "GET") {
-      const studentId=Number(new URL(request.url).searchParams.get("studentId"));
-      const r=await env.DB.prepare("SELECT id,student_id AS studentId,weekday,exercise_id AS exerciseId,sort_order AS sortOrder FROM workout_assignments WHERE student_id=? ORDER BY weekday,sort_order,id").bind(studentId).all(); return json({items:r.results});
-    }
-    if (resource === "assignments" && method === "POST") {
-      const body:any=await request.json(); const studentId=Number(body.studentId); const weekday=Number(body.weekday); const ids=(body.exerciseIds||[]).map(Number);
-      if(!studentId || weekday<0 || weekday>6) return error("Aluno ou dia inválido.");
-      await env.DB.prepare("DELETE FROM workout_assignments WHERE student_id=? AND weekday=?").bind(studentId,weekday).run();
-      for(let i=0;i<ids.length;i++) await env.DB.prepare("INSERT INTO workout_assignments(student_id,weekday,exercise_id,sort_order) VALUES(?,?,?,?)").bind(studentId,weekday,ids[i],i).run();
-      return json({ok:true});
-    }
-
-    const definition = definitions[resource];
-
-    if (!definition) {
-      return error("Recurso administrativo inválido.", 404);
-    }
-
-    if (method === "GET") {
-      const result = await env.DB.prepare(
-        definition.select,
-      ).all();
-
-      return json({
-        items: result.results,
-      });
-    }
-
-    if (method === "POST" && definition.insert) {
-      const body: any = await request.json();
-
-      if (resource === "exercises" && !body.name) {
-        return error("Informe o nome do exercício.");
-      }
-
-      if (resource === "tips" && !body.title) {
-        return error("Informe o título da dica.");
-      }
-
-      if (
-        resource === "diets" &&
-        (!body.studentEmail || !body.title)
-      ) {
-        return error(
-          "Informe o e-mail do aluno e o título da refeição.",
-        );
-      }
-
-      const result = await env.DB.prepare(
-        definition.insert,
-      )
-        .bind(...definition.values(body))
-        .run();
-
-      if (
-        resource === "diets" &&
-        result.meta?.changes === 0
-      ) {
-        return error(
-          "Aluno não encontrado com o e-mail informado.",
-          404,
-        );
-      }
-
-      return json({ ok: true }, 201);
-    }
-
-    return error("Método não permitido.", 405);
-  } catch (caught: any) {
-    console.error(caught);
-
-    return error(
-      caught?.message || "Erro interno do sistema.",
-      500,
-    );
+  if(path==='/api/public/plans'&&method==='GET'){
+   const rows=await env.DB.prepare('SELECT id,name,price,period,duration_days AS durationDays,description FROM plans WHERE active=1 ORDER BY price,id').all();return json({plans:rows.results});
   }
+  if(path==='/api/setup/status'&&method==='GET'){
+   const r=await env.DB.prepare("SELECT id FROM users WHERE role='admin' LIMIT 1").first();return json({configured:!!r});
+  }
+  if(path==='/api/setup/admin'&&method==='POST'){
+   if(!env.SETUP_TOKEN||request.headers.get('x-setup-token')!==env.SETUP_TOKEN)bad('Token de configuração inválido.',403);
+   const existing=await env.DB.prepare("SELECT id FROM users WHERE role='admin' LIMIT 1").first();if(existing)bad('Administrador já configurado.',409);
+   const b=await data(request);if(!b.name||!String(b.email).includes('@')||String(b.password||'').length<8)bad('Informe nome, e-mail e senha de pelo menos 8 caracteres.');
+   await env.DB.prepare("INSERT INTO users(name,email,password_hash,role,subscription_status) VALUES(?,?,?,'admin','ACTIVE')").bind(asText(b.name,120),asText(b.email,180).toLowerCase(),await hashPassword(b.password)).run();return json({ok:true},201);
+  }
+  if(path==='/api/auth/register'&&method==='POST'){
+   const b=await data(request);const name=asText(b.name,120),email=asText(b.email,180).toLowerCase(),cpf=asText(b.cpf,20).replace(/\D/g,''),phone=asText(b.phone,22);
+   if(name.length<3||!email.includes('@')||String(b.password||'').length<8||cpf.length!==11)bad('Preencha nome, e-mail, CPF com 11 dígitos e senha de ao menos 8 caracteres.');
+   try{const r=await env.DB.prepare("INSERT INTO users(name,email,password_hash,role,cpf,phone,subscription_status) VALUES(?,?,?,'student',?,?,'INACTIVE') RETURNING id").bind(name,email,await hashPassword(b.password),cpf,phone).first();const token=await signToken({id:r.id,role:'student'},env.JWT_SECRET);return json({token,user:{id:r.id,name,email,role:'student',subscriptionStatus:'INACTIVE'}},201);}catch{bad('Este e-mail já está cadastrado.',409);}
+  }
+  if(path==='/api/auth/login'&&method==='POST'){
+   const b=await data(request);const u=await env.DB.prepare('SELECT id,name,email,role,password_hash,subscription_status,subscription_until FROM users WHERE email=?').bind(asText(b.email,180).toLowerCase()).first();
+   if(!u||!await verifyPassword(String(b.password||''),u.password_hash))bad('E-mail ou senha incorretos.',401);
+   const a=await checkPlanStatus(env,u);return json({token:await signToken({id:u.id,role:u.role},env.JWT_SECRET),user:{id:u.id,name:u.name,email:u.email,role:u.role,subscriptionStatus:a.subscriptionStatus,subscriptionUntil:a.subscriptionUntil}});
+  }
+  const user=await readUser(request,env);auth(user);
+  if(path==='/api/me'&&method==='GET'){
+   const v=await checkPlanStatus(env,user);const access=await env.DB.prepare('SELECT a.plan_id AS planId,p.name AS planName,a.expires_at AS expiresAt FROM student_plan_access a JOIN plans p ON p.id=a.plan_id WHERE a.student_id=?').bind(user.id).first();
+   let photo=null;try{const rr=await env.DB.prepare('SELECT profile_image_url FROM users WHERE id=?').bind(user.id).first();photo=rr?.profile_image_url||null;}catch{}
+   return json({user:{id:user.id,name:user.name,email:user.email,role:user.role,phone:user.phone,profileImageUrl:photo,subscriptionStatus:v.subscriptionStatus,subscriptionUntil:user.subscription_until,activePlan:access}});
+  }
+  if(path==='/api/account/password'&&method==='POST'){
+   const b=await data(request);const r=await env.DB.prepare('SELECT password_hash FROM users WHERE id=?').bind(user.id).first();if(!await verifyPassword(String(b.currentPassword||''),r.password_hash))bad('Senha atual incorreta.',403);if(String(b.newPassword||'').length<8)bad('A nova senha precisa ter pelo menos 8 caracteres.');
+   await env.DB.prepare('UPDATE users SET password_hash=? WHERE id=?').bind(await hashPassword(String(b.newPassword)),user.id).run();return json({ok:true});
+  }
+  if(path==='/api/student/profile-photo'&&method==='POST'){
+   auth(user,'student');const fd=await request.formData();const file=fd.get('file');if(!(file instanceof File))bad('Selecione sua foto.');let f;try{f=await storeFile(env,file,`profiles/${user.id}`,imageTypes);}catch(e:any){bad(e.message);}
+   const photo=`/media/${encodeURIComponent(f.key)}`;await env.DB.prepare('UPDATE users SET profile_image_url=? WHERE id=?').bind(photo,user.id).run();return json({url:photo});
+  }
+  // Fluxo de planos escolhido PELO ALUNO, sem checkout/webhook Asaas.
+  if(path==='/api/student/requests'&&method==='GET'){
+   auth(user,'student');const r=await getRequests(env,'WHERE r.student_id=?',[user.id]);return json({items:r.results});
+  }
+  if(path==='/api/student/requests'&&method==='POST'){
+   auth(user,'student');const b=await data(request);const plan=await fetchPlan(env,sid(String(b.planId)));
+   if(!plan||!plan.active)bad('Este plano não está disponível.',404);
+   const cfg=await fetchPix(env,plan.id);if(Number(plan.price)>0&&!cfg?.pixKey)bad('O personal ainda não cadastrou a chave Pix deste plano.');
+   const existing=await env.DB.prepare("SELECT id,plan_id AS planId,status FROM plan_requests WHERE student_id=? AND status IN ('AWAITING_PROOF','PROOF_SENT') ORDER BY id DESC LIMIT 1").bind(user.id).first();
+   if(existing?.status==='PROOF_SENT')bad('Você já enviou um comprovante. Aguarde a conferência do personal.',409);
+   if(existing?.planId===plan.id)return json({ok:true,id:existing.id});
+   if(existing)await env.DB.prepare("UPDATE plan_requests SET status='CANCELLED' WHERE id=? AND status='AWAITING_PROOF'").bind(existing.id).run();
+   const r=await env.DB.prepare("INSERT INTO plan_requests(student_id,plan_id,plan_name,price,duration_days,pix_key_snapshot,recipient_snapshot) VALUES(?,?,?,?,?,?,?) RETURNING id").bind(user.id,plan.id,plan.name,Number(plan.price),Number(plan.durationDays),cfg?.pixKey||'',cfg?.recipientName||'').first();return json({ok:true,id:r.id},201);
+  }
+  if(seg[0]==='api'&&seg[1]==='student'&&seg[2]==='requests'&&seg[3]&&seg[4]==='proof'){
+   auth(user,'student');const id=sid(seg[3]);const r=await env.DB.prepare('SELECT * FROM plan_requests WHERE id=? AND student_id=?').bind(id,user.id).first();if(!r)bad('Solicitação não encontrada.',404);
+   if(method==='POST'){
+    if(Number(r.price)===0)bad('Este plano é gratuito: aguarde a aprovação do personal.');
+    if(!['AWAITING_PROOF','PROOF_SENT'].includes(r.status))bad('Este pedido não aceita comprovantes.',409);
+    const f=await parseProof(request,env,user.id,'plan');await env.DB.prepare("UPDATE plan_requests SET proof_key=?,proof_mime=?,proof_name=?,status='PROOF_SENT',proof_sent_at=CURRENT_TIMESTAMP WHERE id=?").bind(f.key,f.mime,f.name,id).run();
+    if(r.proof_key)await env.MEDIA.delete(r.proof_key).catch(()=>{});return json({ok:true});
+   }
+   if(method==='GET'){if(!r.proof_key)bad('Comprovante ainda não enviado.',404);return sendPrivateFile(env,r.proof_key,r.proof_mime,r.proof_name);}
+  }
+  if(seg[0]==='api'&&seg[1]==='student'&&seg[2]==='requests'&&seg[3]&&seg[4]==='cancel'&&method==='POST'){
+   auth(user,'student');const id=sid(seg[3]);const r=await env.DB.prepare("UPDATE plan_requests SET status='CANCELLED' WHERE id=? AND student_id=? AND status='AWAITING_PROOF'").bind(id,user.id).run();if(!r.meta.changes)bad('O pedido não pode mais ser cancelado.',409);return json({ok:true});
+  }
+  if(path==='/api/student/content'&&method==='GET'){
+   auth(user,'student');if(!await ensureActive(env,user))bad('Escolha um plano e aguarde a liberação de acesso.',403);
+   const [exercises,tips,diet,assignments,completions]=await Promise.all([
+    env.DB.prepare('SELECT id,name,training_category AS trainingCategory,muscle_group AS muscleGroup,level,execution_mode AS executionMode,description,objective,instructions,benefits,common_errors AS commonErrors,equipment,sets,reps,duration,rest,tags,video_url AS videoUrl,image_url AS imageUrl FROM exercises WHERE active=1 ORDER BY id DESC').all(),
+    env.DB.prepare('SELECT id,title,description,category,video_url AS videoUrl,image_url AS imageUrl FROM tips WHERE active=1 ORDER BY id DESC').all(),
+    env.DB.prepare('SELECT id,time,title,description FROM diet_items WHERE user_id=? ORDER BY sort_order,id').bind(user.id).all(),
+    env.DB.prepare('SELECT w.id,w.weekday,w.sort_order AS sortOrder,e.id AS exerciseId,e.name,e.training_category AS trainingCategory,e.muscle_group AS muscleGroup,e.level,e.execution_mode AS executionMode,e.description,e.objective,e.instructions,e.benefits,e.common_errors AS commonErrors,e.equipment,e.sets,e.reps,e.duration,e.rest,e.tags,e.video_url AS videoUrl,e.image_url AS imageUrl FROM workout_assignments w JOIN exercises e ON e.id=w.exercise_id WHERE w.student_id=? AND e.active=1 ORDER BY w.weekday,w.sort_order').bind(user.id).all(),
+    env.DB.prepare("SELECT exercise_id AS exerciseId,completed_date AS completedDate FROM workout_completions WHERE user_id=? AND completed_date>=date('now','-30 day')").bind(user.id).all()
+   ]);return json({exercises:exercises.results,tips:tips.results,diet:diet.results,assignments:assignments.results,completions:completions.results});
+  }
+  if(path==='/api/student/workout-complete'&&method==='POST'){
+   auth(user,'student');if(!await ensureActive(env,user))bad('Seu plano está inativo.',403);const b=await data(request);const id=sid(String(b.exerciseId));const exercise=await env.DB.prepare('SELECT id FROM exercises WHERE id=? AND active=1').bind(id).first();if(!exercise)bad('Exercício inválido.',404);
+   await env.DB.prepare("INSERT OR IGNORE INTO workout_completions(user_id,exercise_id,completed_date) VALUES(?,?,date('now'))").bind(user.id,id).run();return json({ok:true});
+  }
+  // Consultoria avulsa também sem Asaas; Pix e comprovante validado pelo personal.
+  if(path==='/api/student/consultation'&&method==='GET'){
+   auth(user,'student');const r=await env.DB.prepare("SELECT c.id,c.status,c.price,c.meeting_url AS meetingUrl,c.requested_at AS requestedAt,c.paid_at AS paidAt,s.starts_at AS selectedStartsAt,m.proof_name AS proofName FROM consultation_requests c LEFT JOIN consultation_slots s ON s.id=c.selected_slot_id LEFT JOIN consultation_manual_proofs m ON m.request_id=c.id WHERE c.student_id=? AND c.status!='CANCELLED' ORDER BY c.id DESC LIMIT 1").bind(user.id).first();
+   const slots=r?await env.DB.prepare("SELECT id,starts_at AS startsAt,status FROM consultation_slots WHERE request_id=? AND status!='CANCELLED' ORDER BY starts_at").bind(r.id).all():{results:[]};const s=await getSettings(env);return json({request:r,slots:slots.results,pixKey:s.consultationPixKey,pixRecipient:s.consultationPixRecipient});
+  }
+  if(path==='/api/student/consultation/request'&&method==='POST'){
+   auth(user,'student');const existing=await env.DB.prepare("SELECT id FROM consultation_requests WHERE student_id=? AND status IN ('REQUESTED','AVAILABILITY_SENT','AWAITING_PAYMENT','CONFIRMED') LIMIT 1").bind(user.id).first();if(existing)bad('Já existe uma consultoria em andamento.',409);
+   const r=await env.DB.prepare("INSERT INTO consultation_requests(student_id,price,status) VALUES(?,300,'REQUESTED') RETURNING id").bind(user.id).first();return json({ok:true,id:r.id},201);
+  }
+  if(path==='/api/student/consultation/select'&&method==='POST'){
+   auth(user,'student');const b=await data(request);const id=sid(String(b.slotId));const slot=await env.DB.prepare("SELECT s.id,s.request_id,c.student_id,c.status FROM consultation_slots s JOIN consultation_requests c ON c.id=s.request_id WHERE s.id=? AND c.student_id=? AND s.status='AVAILABLE'").bind(id,user.id).first();if(!slot||slot.status!=='AVAILABILITY_SENT')bad('Horário não disponível.',409);
+   const s=await getSettings(env);if(!s.consultationPixKey)bad('O personal ainda não cadastrou o Pix da consultoria.');
+   await env.DB.batch([env.DB.prepare("UPDATE consultation_slots SET status='SELECTED' WHERE id=?").bind(id),env.DB.prepare("UPDATE consultation_slots SET status='CANCELLED' WHERE request_id=? AND id<>?").bind(slot.request_id,id),env.DB.prepare("UPDATE consultation_requests SET status='AWAITING_PAYMENT',selected_slot_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(id,slot.request_id)]);return json({ok:true});
+  }
+  if(path==='/api/student/consultation/proof'&&method==='POST'){
+   auth(user,'student');const req=await env.DB.prepare("SELECT id FROM consultation_requests WHERE student_id=? AND status='AWAITING_PAYMENT' ORDER BY id DESC LIMIT 1").bind(user.id).first();if(!req)bad('Não há consultoria aguardando pagamento.',404);const f=await parseProof(request,env,user.id,'consultation');
+   const old=await env.DB.prepare('SELECT proof_key FROM consultation_manual_proofs WHERE request_id=?').bind(req.id).first();await env.DB.prepare("INSERT INTO consultation_manual_proofs(request_id,proof_key,proof_mime,proof_name,sent_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(request_id) DO UPDATE SET proof_key=excluded.proof_key,proof_mime=excluded.proof_mime,proof_name=excluded.proof_name,sent_at=CURRENT_TIMESTAMP").bind(req.id,f.key,f.mime,f.name).run();if(old?.proof_key)await env.MEDIA.delete(old.proof_key).catch(()=>{});return json({ok:true});
+  }
+  // Painel administrativo
+  if(!path.startsWith('/api/admin/'))bad('Endereço não encontrado.',404);auth(user,'admin');
+  if(path==='/api/admin/summary'&&method==='GET'){
+   const [students,active,requests,consults]=await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) n FROM users WHERE role='student'").first(),
+    env.DB.prepare("SELECT COUNT(*) n FROM users WHERE role='student' AND subscription_status='ACTIVE' AND (subscription_until IS NULL OR datetime(subscription_until)>datetime('now'))").first(),
+    env.DB.prepare("SELECT COUNT(*) n FROM plan_requests WHERE status IN ('AWAITING_PROOF','PROOF_SENT')").first(),
+    env.DB.prepare("SELECT COUNT(*) n FROM consultation_requests WHERE status IN ('REQUESTED','AVAILABILITY_SENT','AWAITING_PAYMENT')").first()
+   ]);return json({students:students.n,active:active.n,requests:requests.n,consultations:consults.n});
+  }
+  if(path==='/api/admin/settings'&&method==='GET')return json({settings:await getSettings(env)});
+  if(path==='/api/admin/settings'&&method==='PUT'){
+   const b=await data(request);await env.DB.prepare('UPDATE app_settings SET brand_name=?,hero_title=?,hero_subtitle=?,consultation_pix_key=?,consultation_pix_recipient=?,updated_at=CURRENT_TIMESTAMP WHERE id=1').bind(asText(b.brandName,90),asText(b.heroTitle,150),asText(b.heroSubtitle,420),asText(b.consultationPixKey,160),asText(b.consultationPixRecipient,150)).run();await writeAudit(env,user.id,'UPDATE_SETTINGS',1);return json({ok:true});
+  }
+  if(seg[0]==='api'&&seg[1]==='admin'&&seg[2]==='branding'&&seg[3]&&method==='POST'){
+   const slot=seg[3];const columns:{[k:string]:string}={logo:'logo_url',hero:'hero_image_url',inside:'inside_image_url'};const col=columns[slot];if(!col)bad('Tipo de imagem inválido.');const fd=await request.formData();const file=fd.get('file');if(!(file instanceof File))bad('Selecione uma imagem.');let f;try{f=await storeFile(env,file,`public/brand/${slot}`,imageTypes,8*1024*1024)}catch(e:any){bad(e.message);}
+   const imageUrl='/media/'+encodeURIComponent(f.key);await env.DB.prepare(`UPDATE app_settings SET ${col}=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`).bind(imageUrl).run();await writeAudit(env,user.id,'UPDATE_BRAND_'+slot,1);return json({ok:true,url:imageUrl});
+  }
+  if(path==='/api/admin/account'&&method==='PUT'){
+   const b=await data(request);const email=asText(b.email,180).toLowerCase(),name=asText(b.name,120);if(!email.includes('@')||!name)bad('Nome e e-mail inválidos.');const current=await env.DB.prepare('SELECT password_hash FROM users WHERE id=?').bind(user.id).first();if(!await verifyPassword(String(b.password||''),current.password_hash))bad('Informe sua senha atual para alterar os dados.',403);
+   await env.DB.prepare('UPDATE users SET name=?,email=? WHERE id=?').bind(name,email,user.id).run();return json({ok:true});
+  }
+  if(path==='/api/admin/plans'&&method==='GET'){
+   const rows=await env.DB.prepare('SELECT p.id,p.name,p.price,p.period,p.duration_days AS durationDays,p.description,p.active,COALESCE(x.pix_key,\'\') AS pixKey,COALESCE(x.pix_type,\'Aleatória\') AS pixType,COALESCE(x.recipient_name,\'\') AS recipientName,COALESCE(x.instructions,\'\') AS instructions FROM plans p LEFT JOIN plan_pix_config x ON x.plan_id=p.id ORDER BY p.id').all();return json({items:rows.results});
+  }
+  if(path==='/api/admin/plans'&&method==='POST'){
+   const b=await data(request);const name=asText(b.name,100),price=Number(b.price),days=Number(b.durationDays);if(!name||!Number.isFinite(price)||price<0||!Number.isSafeInteger(days)||days<1||days>3660)bad('Preencha nome, preço e duração do plano.');
+   const rr=await env.DB.prepare('INSERT INTO plans(name,price,period,duration_days,description,active) VALUES(?,?,?,?,?,1) RETURNING id').bind(name,price,asText(b.period,30),days,asText(b.description,500)).first();
+   await env.DB.prepare('INSERT INTO plan_pix_config(plan_id,pix_key,pix_type,recipient_name,instructions) VALUES(?,?,?,?,?)').bind(rr.id,asText(b.pixKey,160),asText(b.pixType,25),asText(b.recipientName,140),asText(b.instructions,700)).run();await writeAudit(env,user.id,'CREATE_PLAN',rr.id);return json({ok:true,id:rr.id});
+  }
+  if(seg[0]==='api'&&seg[1]==='admin'&&seg[2]==='plans'&&seg[3]&&method==='PUT'){
+   const id=sid(seg[3]);const b=await data(request);const name=asText(b.name,100),price=Number(b.price),days=Number(b.durationDays);if(!name||!Number.isFinite(price)||price<0||!Number.isSafeInteger(days)||days<1||days>3660)bad('Valores do plano inválidos.');
+   await env.DB.batch([env.DB.prepare('UPDATE plans SET name=?,price=?,period=?,duration_days=?,description=?,active=? WHERE id=?').bind(name,price,asText(b.period,30),days,asText(b.description,500),b.active?1:0,id),
+    env.DB.prepare('INSERT INTO plan_pix_config(plan_id,pix_key,pix_type,recipient_name,instructions,updated_at) VALUES(?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(plan_id) DO UPDATE SET pix_key=excluded.pix_key,pix_type=excluded.pix_type,recipient_name=excluded.recipient_name,instructions=excluded.instructions,updated_at=CURRENT_TIMESTAMP').bind(id,asText(b.pixKey,160),asText(b.pixType,25),asText(b.recipientName,140),asText(b.instructions,700))]);await writeAudit(env,user.id,'UPDATE_PLAN',id);return json({ok:true});
+  }
+  if(path==='/api/admin/requests'&&method==='GET')return json({items:(await getRequests(env)).results});
+  if(seg[0]==='api'&&seg[1]==='admin'&&seg[2]==='requests'&&seg[3]&&seg[4]==='proof'&&method==='GET'){
+   const id=sid(seg[3]);const r=await env.DB.prepare('SELECT proof_key,proof_name,proof_mime FROM plan_requests WHERE id=?').bind(id).first();if(!r?.proof_key)bad('Comprovante não encontrado.',404);return sendPrivateFile(env,r.proof_key,r.proof_mime,r.proof_name);
+  }
+  if(seg[0]==='api'&&seg[1]==='admin'&&seg[2]==='requests'&&seg[3]&&seg[4]==='decision'&&method==='POST'){
+   const id=sid(seg[3]);const b=await data(request);const r=await env.DB.prepare('SELECT * FROM plan_requests WHERE id=?').bind(id).first();if(!r)bad('Solicitação não encontrada.',404);
+   const note=asText(b.note,500);
+   if(b.action==='REJECT'){
+    if(!['AWAITING_PROOF','PROOF_SENT'].includes(r.status))bad('Solicitação já finalizada.',409);
+    await env.DB.prepare("UPDATE plan_requests SET status='REJECTED',decided_by=?,decided_at=CURRENT_TIMESTAMP,decision_note=? WHERE id=?").bind(user.id,note||'Comprovante rejeitado.',id).run();await writeAudit(env,user.id,'REJECT_PLAN_REQUEST',id,note);return json({ok:true});
+   }
+   if(b.action!=='APPROVE')bad('Ação inválida.');
+   if(!['AWAITING_PROOF','PROOF_SENT'].includes(r.status))bad('Solicitação já finalizada.',409);
+   if(Number(r.price)>0&&(r.status!=='PROOF_SENT'||!r.proof_key))bad('Antes de aprovar, aguarde e confira o comprovante do aluno.',409);
+   const now=Date.now();const student=await env.DB.prepare('SELECT subscription_status,subscription_until FROM users WHERE id=?').bind(r.student_id).first();if(!student)bad('Aluno não encontrado.',404);
+   const previous=student.subscription_status==='ACTIVE'&&student.subscription_until?Date.parse(student.subscription_until):0;const start=Math.max(now,Number.isFinite(previous)?previous:0);const end=new Date(start+Number(r.duration_days)*86400000).toISOString();
+   // D1.batch executa a aprovação e a liberação na mesma transação.
+   const result=await env.DB.batch([
+    env.DB.prepare("UPDATE plan_requests SET status='APPROVED',decided_by=?,decided_at=CURRENT_TIMESTAMP,decision_note=?,activated_until=? WHERE id=? AND status IN ('AWAITING_PROOF','PROOF_SENT')").bind(user.id,note||'',end,id),
+    env.DB.prepare("UPDATE users SET subscription_status='ACTIVE',subscription_until=? WHERE id=? AND EXISTS(SELECT 1 FROM plan_requests WHERE id=? AND status='APPROVED')").bind(end,r.student_id,id),
+    env.DB.prepare("INSERT INTO student_plan_access(student_id,plan_id,request_id,activated_at,expires_at) SELECT ?,?,?,CURRENT_TIMESTAMP,? WHERE EXISTS(SELECT 1 FROM plan_requests WHERE id=? AND status='APPROVED') ON CONFLICT(student_id) DO UPDATE SET plan_id=excluded.plan_id,request_id=excluded.request_id,activated_at=CURRENT_TIMESTAMP,expires_at=excluded.expires_at").bind(r.student_id,r.plan_id,id,end,id)
+   ]);if(!result[0]?.meta?.changes)bad('Este pedido já foi processado.',409);await writeAudit(env,user.id,'APPROVE_PLAN_REQUEST',id,`student=${r.student_id};plan=${r.plan_id};expires=${end}`);return json({ok:true,expiresAt:end});
+  }
+  if(path==='/api/admin/students'&&method==='GET'){
+   const r=await env.DB.prepare("SELECT u.id,u.name,u.email,u.phone,u.cpf,u.subscription_status AS subscriptionStatus,u.subscription_until AS subscriptionUntil,u.created_at AS createdAt,a.plan_id AS planId,p.name AS planName FROM users u LEFT JOIN student_plan_access a ON a.student_id=u.id LEFT JOIN plans p ON p.id=a.plan_id WHERE u.role='student' ORDER BY u.id DESC").all();return json({items:r.results});
+  }
+  if(seg[0]==='api'&&seg[1]==='admin'&&seg[2]==='students'&&seg[3]&&method==='DELETE'){
+   const id=sid(seg[3]);await env.DB.batch([
+    env.DB.prepare('DELETE FROM workout_completions WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM workout_assignments WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM diet_items WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM plan_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM student_plan_access WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM consultation_manual_proofs WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_slots WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM payments WHERE user_id=?').bind(id),env.DB.prepare("DELETE FROM users WHERE id=? AND role='student'").bind(id)
+   ]);await writeAudit(env,user.id,'DELETE_STUDENT',id);return json({ok:true});
+  }
+  // Conteúdo administrativo e treinos (compatível com os cadastros AFIT 3.0).
+  const resources:{[key:string]:{table:string,columns:string[],select:string}}={
+   exercises:{table:'exercises',columns:['name','training_category','muscle_group','level','execution_mode','description','objective','instructions','benefits','common_errors','equipment','sets','reps','duration','rest','tags','video_url','image_url','active'],select:'SELECT id,name,training_category AS trainingCategory,muscle_group AS muscleGroup,level,execution_mode AS executionMode,description,objective,instructions,benefits,common_errors AS commonErrors,equipment,sets,reps,duration,rest,tags,video_url AS videoUrl,image_url AS imageUrl,active FROM exercises ORDER BY id DESC'},
+   tips:{table:'tips',columns:['title','description','category','video_url','image_url','active'],select:'SELECT id,title,description,category,video_url AS videoUrl,image_url AS imageUrl,active FROM tips ORDER BY id DESC'},
+   diets:{table:'diet_items',columns:['user_id','time','title','description','sort_order'],select:'SELECT d.id,d.user_id AS studentId,d.time,d.title,d.description,d.sort_order AS sortOrder,u.name AS studentName,u.email AS studentEmail FROM diet_items d JOIN users u ON u.id=d.user_id ORDER BY d.id DESC'}
+  };
+  if(path==='/api/admin/upload'&&method==='POST'){
+   const fd=await request.formData();const file=fd.get('file');if(!(file instanceof File))bad('Selecione um arquivo.');const types=[...imageTypes,'video/mp4','video/webm','video/quicktime'];let f;try{f=await storeFile(env,file,'public/content',types,95*1048576)}catch(e:any){bad(e.message);}return json({url:'/media/'+encodeURIComponent(f.key)});
+  }
+  if(seg[0]==='api'&&seg[1]==='admin'&&resources[seg[2]]&&seg.length<=4){
+   const resource=resources[seg[2]],id=seg[3]?sid(seg[3]):null;
+   if(method==='GET'&&!id)return json({items:(await env.DB.prepare(resource.select).all()).results});
+   if(method==='DELETE'&&id){await env.DB.prepare(`DELETE FROM ${resource.table} WHERE id=?`).bind(id).run();await writeAudit(env,user.id,'DELETE_'+seg[2],id);return json({ok:true});}
+   if(method==='POST'||method==='PUT'){
+    const b=await data(request);let o:any={...b};if(seg[2]==='exercises'){o={name:b.name,training_category:b.trainingCategory||'Musculação',muscle_group:b.muscleGroup||null,level:b.level||'Iniciante',execution_mode:b.executionMode||'Repetições',description:b.description||null,objective:b.objective||null,instructions:b.instructions||null,benefits:b.benefits||null,common_errors:b.commonErrors||null,equipment:b.equipment||null,sets:Number(b.sets||0),reps:b.reps||null,duration:b.duration||null,rest:b.rest||null,tags:b.tags||null,video_url:b.videoUrl||null,image_url:b.imageUrl||null,active:b.active===false?0:1};}
+    if(seg[2]==='tips')o={title:b.title,description:b.description||null,category:b.category||null,video_url:b.videoUrl||null,image_url:b.imageUrl||null,active:b.active===false?0:1};
+    if(seg[2]==='diets'){const u=await env.DB.prepare("SELECT id FROM users WHERE email=? AND role='student'").bind(asText(b.studentEmail,180).toLowerCase()).first();if(!u)bad('Aluno não encontrado pelo e-mail informado.',404);o={user_id:u.id,time:b.time||null,title:b.title,description:b.description||null,sort_order:Number(b.sortOrder||0)};}
+    if(!o.name&&!o.title)bad('Informe o título ou nome.');
+    const cols=resource.columns,vals=cols.map(c=>o[c]??null);if(method==='POST'){
+     const row=await env.DB.prepare(`INSERT INTO ${resource.table}(${cols.join(',')}) VALUES(${cols.map(()=>'?').join(',')}) RETURNING id`).bind(...vals).first();await writeAudit(env,user.id,'CREATE_'+seg[2],row.id);return json({ok:true,id:row.id});
+    }if(!id)bad('Identificador obrigatório.');await env.DB.prepare(`UPDATE ${resource.table} SET ${cols.map(c=>c+'=?').join(',')} WHERE id=?`).bind(...vals,id).run();await writeAudit(env,user.id,'UPDATE_'+seg[2],id);return json({ok:true});
+   }
+  }
+  if(path==='/api/admin/assignments'&&method==='GET'){
+   const studentId=sid(url.searchParams.get('studentId')||'');const rows=await env.DB.prepare('SELECT id,student_id AS studentId,weekday,exercise_id AS exerciseId,sort_order AS sortOrder FROM workout_assignments WHERE student_id=? ORDER BY weekday,sort_order').bind(studentId).all();return json({items:rows.results});
+  }
+  if(path==='/api/admin/assignments'&&method==='POST'){
+   const b=await data(request);const id=sid(String(b.studentId)),day=Number(b.weekday),ids=Array.isArray(b.exerciseIds)?b.exerciseIds.map((x:any)=>sid(String(x))):[];if(!Number.isInteger(day)||day<0||day>6||ids.length>70)bad('Dia ou lista inválidos.');
+   const statements=[env.DB.prepare('DELETE FROM workout_assignments WHERE student_id=? AND weekday=?').bind(id,day),...ids.map((n:number,i:number)=>env.DB.prepare('INSERT INTO workout_assignments(student_id,weekday,exercise_id,sort_order) VALUES(?,?,?,?)').bind(id,day,n,i))];await env.DB.batch(statements);await writeAudit(env,user.id,'SAVE_ASSIGNMENTS',id,`weekday=${day}`);return json({ok:true});
+  }
+  if(path==='/api/admin/consultations'&&method==='GET'){
+   const rows=await env.DB.prepare('SELECT c.id,c.student_id AS studentId,u.name AS studentName,u.email AS studentEmail,u.phone,c.status,c.price,c.meeting_url AS meetingUrl,c.requested_at AS requestedAt,s.starts_at AS selectedStartsAt,m.proof_name AS proofName,m.sent_at AS proofSentAt FROM consultation_requests c JOIN users u ON u.id=c.student_id LEFT JOIN consultation_slots s ON s.id=c.selected_slot_id LEFT JOIN consultation_manual_proofs m ON m.request_id=c.id ORDER BY c.id DESC').all();
+   for(const r of rows.results as any[]){r.slots=(await env.DB.prepare('SELECT id,starts_at AS startsAt,status FROM consultation_slots WHERE request_id=? ORDER BY starts_at').bind(r.id).all()).results;}return json({items:rows.results});
+  }
+  if(path==='/api/admin/consultations/slots'&&method==='POST'){
+   const b=await data(request);const id=sid(String(b.requestId));const cr=await env.DB.prepare('SELECT status FROM consultation_requests WHERE id=?').bind(id).first();if(!cr||!['REQUESTED','AVAILABILITY_SENT'].includes(cr.status))bad('Consultoria não pode receber horários.',409);
+   const slots=Array.isArray(b.slots)?b.slots.map((x:string)=>asText(x,35)).filter(Boolean):[];if(!slots.length||slots.length>20||slots.some((x:string)=>!safeDate(x)))bad('Informe de 1 a 20 horários válidos.');
+   const columns=await env.DB.prepare('PRAGMA table_info(consultation_slots)').all();const legacy=columns.results.some((x:any)=>x.name==='available_date')&&columns.results.some((x:any)=>x.name==='available_time');
+   const queries=[env.DB.prepare("DELETE FROM consultation_slots WHERE request_id=? AND status='AVAILABLE'").bind(id),...slots.map((x:string)=>legacy?env.DB.prepare("INSERT INTO consultation_slots(request_id,available_date,available_time,starts_at,status) VALUES(?,?,?,?,'AVAILABLE')").bind(id,x.slice(0,10),x.slice(11,16),x):env.DB.prepare("INSERT INTO consultation_slots(request_id,starts_at,status) VALUES(?,?,'AVAILABLE')").bind(id,x)),env.DB.prepare("UPDATE consultation_requests SET status='AVAILABILITY_SENT' WHERE id=?").bind(id)];await env.DB.batch(queries);return json({ok:true});
+  }
+  if(seg[0]==='api'&&seg[1]==='admin'&&seg[2]==='consultations'&&seg[3]&&seg[4]==='proof'&&method==='GET'){
+   const id=sid(seg[3]);const r=await env.DB.prepare('SELECT proof_key,proof_mime,proof_name FROM consultation_manual_proofs WHERE request_id=?').bind(id).first();if(!r?.proof_key)bad('Comprovante não enviado.',404);return sendPrivateFile(env,r.proof_key,r.proof_mime,r.proof_name);
+  }
+  if(seg[0]==='api'&&seg[1]==='admin'&&seg[2]==='consultations'&&seg[3]&&seg[4]==='decision'&&method==='POST'){
+   const id=sid(seg[3]);const b=await data(request);const r=await env.DB.prepare('SELECT status FROM consultation_requests WHERE id=?').bind(id).first();if(!r)bad('Consultoria não encontrada.',404);
+   if(b.action==='APPROVE'){
+    if(r.status!=='AWAITING_PAYMENT')bad('Consultoria não está aguardando pagamento.',409);
+    const proof=await env.DB.prepare('SELECT proof_key FROM consultation_manual_proofs WHERE request_id=?').bind(id).first();if(!proof?.proof_key)bad('Comprovante não foi enviado.',409);
+    await env.DB.prepare("UPDATE consultation_requests SET status='CONFIRMED',payment_status='MANUAL_CONFIRMED',paid_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(id).run();
+   }else if(b.action==='MEETING'){
+    await env.DB.prepare('UPDATE consultation_requests SET meeting_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(asText(b.meetingUrl,400),id).run();
+   }else if(b.action==='COMPLETE'){
+    if(r.status!=='CONFIRMED')bad('Consultoria não foi confirmada.',409);await env.DB.prepare("UPDATE consultation_requests SET status='COMPLETED' WHERE id=?").bind(id).run();
+   }else if(b.action==='CANCEL'){
+    if(r.status==='COMPLETED')bad('Atendimento já concluído.',409);await env.DB.prepare("UPDATE consultation_requests SET status='CANCELLED' WHERE id=?").bind(id).run();
+   }else bad('Ação desconhecida.');await writeAudit(env,user.id,'CONSULTATION_'+b.action,id);return json({ok:true});
+  }
+  bad('Endereço não encontrado.',404);
+ }catch(e:any){if(e instanceof HttpError)return fail(e.message,e.status);console.error('WN-API',path,e);return fail('Erro interno. Confirme as migrações e configurações do D1/R2.',500);}
 };

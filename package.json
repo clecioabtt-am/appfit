@@ -1,24 +1,14 @@
 {
-  "name": "afit-cloudflare-platform",
+  "name": "wagner-noronha-afit",
+  "version": "4.0.0",
   "private": true,
-  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "deploy:pages": "npm run build && wrangler pages deploy dist --project-name=appfit"
+    "check": "tsc --noEmit"
   },
-  "dependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  },
-  "devDependencies": {
-    "@types/react": "^19.0.3",
-    "@types/react-dom": "^19.0.2",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.5",
-    "wrangler": "^4.0.0"
-  }
+  "dependencies": {"react": "^18.3.1", "react-dom": "^18.3.1", "lucide-react": "^0.468.0"},
+  "devDependencies": {"@types/react": "^18.3.12", "@types/react-dom": "^18.3.1", "@vitejs/plugin-react": "^4.3.4", "typescript": "^5.7.3", "vite": "^6.0.5"}
 }

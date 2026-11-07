@@ -1,1307 +1,267 @@
-import React, { useEffect, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import React,{useEffect,useState} from 'react';
+import{createRoot}from'react-dom/client';
+import {Activity,ArrowDownToLine,ArrowLeft,ArrowRight,BadgeCheck,Banknote,CalendarDays,Check,CheckCircle2,ChevronDown,ChevronLeft,ChevronRight,Clock,Copy,CreditCard,Dumbbell,Eye,FileCheck2,FileText,ImagePlus,Instagram,KeyRound,LayoutDashboard,LockKeyhole,LogOut,Menu,MessageCircle,Plus,RefreshCw,Save,Search,Settings as SettingsIcon,ShieldCheck,Smartphone,Trash2,Upload,UserRound,Users,Utensils,Video,Wallet,Wifi,WifiOff,X} from 'lucide-react';
+import {api,get,post,put,del,upload,previewPrivate,getToken,setToken} from './api';
+import type{User,Settings,Plan,PlanRequest}from './api';
 import './styles.css';
-import { api } from './api';
-import type { User } from './api';
+const DEFAULT_SETTINGS:Settings={brandName:'Wagner Noronha',logoUrl:'/brand/logo-wagner.png',heroImageUrl:'/brand/wagner-hero.jpg',insideImageUrl:'/brand/wagner-retrato.jpg',heroTitle:'Seu potencial. Sua evolução.',heroSubtitle:'Treinos personalizados, acompanhamento de verdade e uma rotina feita para seus resultados.'};
+const money=(v:any)=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const formatDate=(v:any)=>v?new Date(v).toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'}):'—';
+const formatDateTime=(v:any)=>v?new Date(v).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}):'—';
+const days=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+const STATUS:Record<string,string>={AWAITING_PROOF:'Aguardando comprovante',PROOF_SENT:'Comprovante enviado',APPROVED:'Acesso liberado',REJECTED:'Pagamento rejeitado',CANCELLED:'Cancelado',REQUESTED:'Solicitada',AVAILABILITY_SENT:'Horários disponíveis',AWAITING_PAYMENT:'Aguardando comprovante',CONFIRMED:'Confirmada',COMPLETED:'Concluída'};
+function Status({value}:{value:string}){return <span className={'status status-'+value.toLowerCase()}><span className="statusDot"/>{STATUS[value]||value}</span>}
+function useNotice(){const [notice,setNotice]=useState<{message:string;error?:boolean}|null>(null);const show=(message:string,error=false)=>{setNotice({message,error});};return {notice,show,clear:()=>setNotice(null)};}
+function Notice({value,onClose}:{value:{message:string;error?:boolean}|null;onClose:()=>void}){return value?<div className={'notice '+(value.error?'error':'')} role="status"><span>{value.message}</span><button aria-label="Fechar aviso" onClick={onClose}><X size={17}/></button></div>:null}
+function Button({children,variant='primary',onClick,disabled=false,type='button',className=''}:{children:React.ReactNode;variant?:'primary'|'ghost'|'outline'|'danger';onClick?:()=>void;disabled?:boolean;type?:'button'|'submit';className?:string}){return <button className={`btn btn-${variant} ${className}`} type={type} onClick={onClick} disabled={disabled}>{children}</button>}
+function Input({label,children}:{label:string;children:React.ReactNode}){return <label className="field"><span>{label}</span>{children}</label>}
+function PageTitle({title,subtitle,action}:{title:string;subtitle?:string;action?:React.ReactNode}){return <div className="pageTitle"><div><div className="pageKicker">WAGNER NORONHA · PERSONAL TRAINER</div><h1>{title}</h1>{subtitle&&<p>{subtitle}</p>}</div>{action&&<div>{action}</div>}</div>}
+function Empty({title,description,icon=FileText}:{title:string;description:string;icon?:any}){const I=icon;return <div className="empty"><div className="emptyIcon"><I size={27}/></div><strong>{title}</strong><p>{description}</p></div>}
+function dateSafe(v?:string){return v?new Date(v).toISOString().slice(0,10):''}
 
-const plansFallback = [
-  {
-    id: 1,
-    name: 'Plano Mensal',
-    price: 59.9,
-    period: 'mês',
-    description: 'Treinos e acompanhamento pela plataforma.',
-  },
-  {
-    id: 2,
-    name: 'Plano Trimestral',
-    price: 161.7,
-    period: 'trimestre',
-    description: 'Economia e acompanhamento por 3 meses.',
-  },
-  {
-    id: 999999,
-    name: 'Plano Teste',
-    price: 0,
-    period: '20 dias',
-    description: 'Teste gratuito da plataforma por 20 dias, sem cobrança.',
-    duration_days: 20,
-  },
-];
-
-function useInstallPrompt() {
-  const [prompt, setPrompt] = useState<any>(null);
-  const [installed, setInstalled] = useState(
-    window.matchMedia('(display-mode: standalone)').matches,
-  );
-  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-
-  useEffect(() => {
-    const before = (event: any) => {
-      event.preventDefault();
-      setPrompt(event);
-    };
-
-    const done = () => {
-      setInstalled(true);
-      setPrompt(null);
-    };
-
-    window.addEventListener('beforeinstallprompt', before);
-    window.addEventListener('appinstalled', done);
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', before);
-      window.removeEventListener('appinstalled', done);
-    };
-  }, []);
-
-  const install = async () => {
-    if (!prompt) return;
-    await prompt.prompt();
-    await prompt.userChoice;
-    setPrompt(null);
-  };
-
-  return {
-    canInstall: Boolean(prompt),
-    installed,
-    isIOS,
-    install,
-  };
+function App(){const [settings,setSettings]=useState<Settings>(DEFAULT_SETTINGS),[user,setUser]=useState<User|null>(null),[ready,setReady]=useState(false),[needSetup,setNeedSetup]=useState(false);const [page,setPage]=useState('home'),[mobileMenu,setMobileMenu]=useState(false),[installEvent,setInstallEvent]=useState<any>(null);const {notice,show,clear}=useNotice();
+ const refreshSettings=()=>get<{settings:Settings}>('/public/settings').then(r=>setSettings(r.settings)).catch(()=>{});
+ const refreshUser=()=>get<{user:User}>('/me').then(r=>{setUser(r.user);return r.user;}).catch(()=>{setToken('');setUser(null);return null;});
+ useEffect(()=>{refreshSettings();get('/setup/status').then(r=>setNeedSetup(!r.configured)).catch(()=>{});(async()=>{if(getToken())await refreshUser();setReady(true);})();if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));const onPrompt=(e:any)=>{e.preventDefault();setInstallEvent(e)};window.addEventListener('beforeinstallprompt',onPrompt);return()=>window.removeEventListener('beforeinstallprompt',onPrompt);},[]);
+ const login=(u:User,t:string)=>{setToken(t);setUser(u);setPage(u.role==='admin'?'dashboard':'home');show('Bem-vindo ao Wagner Noronha Personal Trainer!')};
+ const logout=()=>{setToken('');setUser(null);setPage('home');setMobileMenu(false);clear()};
+ const install=async()=>{if(installEvent){await installEvent.prompt();setInstallEvent(null)}else show('No iPhone: toque em Compartilhar e Adicionar à Tela de Início. No Android: use Instalar aplicativo no menu do Chrome.');};
+ const navigation:Array<[string,string,any]>=user?.role==='admin'?[['dashboard','Visão geral',LayoutDashboard],['requests','Pedidos Pix',Wallet],['plans','Planos e Pix',CreditCard],['students','Alunos',Users],['assignments','Treinos por aluno',CalendarDays],['exercises','Exercícios',Dumbbell],['diets','Dietas',Utensils],['tips','Dicas',Activity],['consultations','Consultorias',MessageCircle],['branding','Personalização',SettingsIcon],['account','Minha conta',ShieldCheck]]:[['home','Visão geral',LayoutDashboard],['plans','Planos',Wallet],['workouts','Exercícios',Dumbbell],['personalized','Meu treino',CalendarDays],['diet','Minha dieta',Utensils],['tips','Dicas',Activity],['consultation','Consultoria',MessageCircle],['profile','Meu perfil',UserRound]];
+ const navigate=(v:string)=>{setPage(v);setMobileMenu(false);window.scrollTo({top:0,behavior:'smooth'});clear()};
+ if(!ready)return <div className="splash"><img src={settings.logoUrl} alt="Wagner Noronha"/><span className="spinner"/></div>;
+ if(!user)return <Auth settings={settings} setup={needSetup} onLogin={login} install={install} show={show} notice={notice} clear={clear}/>;
+ return <div className="appRoot"><aside className={'sidebar '+(mobileMenu?'mobileOpen':'')}>
+   <div className="sidebarBrand"><img src={settings.logoUrl} alt="Wagner Noronha Personal Trainer"/><span className="brandSubtitle">TREINAMENTO & EVOLUÇÃO</span></div>
+   <div className="navCaption">MENU PRINCIPAL</div><nav className="sideNav">{navigation.map(([id,label,I])=><button key={id} className={page===id?'active':''} onClick={()=>navigate(id)}><I size={18}/><span>{label}</span>{page===id&&<span className="navActiveLight"/>}</button>)}</nav>
+   <div className="sideFoot"><div className="personalMini"><img src={settings.insideImageUrl} alt="Foto do personal Wagner Noronha"/><div><strong>Wagner Noronha</strong><small>Seu personal trainer</small></div></div><button className="sidebarLogout" onClick={logout}><LogOut size={17}/> Sair da conta</button></div>
+  </aside>{mobileMenu&&<button className="mobileBackdrop" onClick={()=>setMobileMenu(false)} aria-label="Fechar menu"/>}
+  <div className="mainShell"><header className="topbar"><button className="hamburger" onClick={()=>setMobileMenu(v=>!v)} aria-label="Abrir menu"><Menu size={23}/></button><div className="topBrand"><img src={settings.logoUrl} alt="Logo Wagner Noronha"/><span>WAGNER <b>NORONHA</b></span></div><div className="topRight"><span className="topUser"><b>Olá, {user.name.split(' ')[0]}</b><small>{user.role==='admin'?'Administrador':'Área do aluno'}</small></span><div className="userBadge">{user.name.slice(0,1).toUpperCase()}</div></div></header>
+  <main className="mainContent"><Notice value={notice} onClose={clear}/>{user.role==='admin'?<AdminRoutes page={page} navigate={navigate} user={user} settings={settings} onSettings={refreshSettings} onUser={refreshUser} show={show}/>:<StudentRoutes page={page} navigate={navigate} user={user} settings={settings} onUser={refreshUser} show={show}/>}
+  </main><footer className="appFooter"><span>© 2026 Wagner Noronha Personal Trainer</span><span>EXCLUSIVIDADE • DISCIPLINA • RESULTADOS</span></footer></div>
+  <nav className="mobileBottom">{navigation.slice(0,4).map(([id,label,I])=><button key={id} className={page===id?'current':''} onClick={()=>navigate(id)}><I size={19}/><span>{label}</span></button>)}<button onClick={()=>setMobileMenu(true)}><Menu size={19}/><span>Mais</span></button></nav>
+  </div>;
+}
+function Auth({settings,setup,onLogin,install,show,notice,clear}:{settings:Settings;setup:boolean;onLogin:(u:User,t:string)=>void;install:()=>void;show:(m:string,e?:boolean)=>void;notice:any;clear:()=>void}){
+ const[mode,setMode]=useState<'login'|'register'|'setup'>('login'),[busy,setBusy]=useState(false),[form,setForm]=useState<any>({name:'',email:'',password:'',cpf:'',phone:'',token:''});const set=(key:string,value:any)=>setForm((s:any)=>({...s,[key]:value}));
+ const submit=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);clear();try{if(mode==='setup'){await api('/setup/admin',{method:'POST',headers:{'x-setup-token':form.token},body:JSON.stringify({name:form.name,email:form.email,password:form.password})});show('Administrador criado. Entre com seu e-mail e senha.');setMode('login');}else{const r=await post<{user:User;token:string}>(mode==='login'?'/auth/login':'/auth/register',form);onLogin(r.user,r.token);}}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ return <div className="authRoot"><div className="authNav"><div className="authBrand"><img src={settings.logoUrl} alt="Logo Wagner Noronha"/><div><strong>WAGNER <em>NORONHA</em></strong><small>PERSONAL TRAINER</small></div></div><button className="installLink" onClick={install}><Smartphone size={17}/> Instalar aplicativo</button></div>
+  <div className="authLayout"><div className="authVisual"><div className="authGlow"/><div className="authCopy"><span className="labelGold"><span/> PERSONAL TRAINER</span><h1>TRANSFORME<br/>SUA <em>EVOLUÇÃO.</em></h1><p>{settings.heroSubtitle}</p><div className="authProof"><BadgeCheck size={19}/><span>Treinamento planejado para o seu objetivo.</span></div></div><div className="authPortrait"><img src={settings.heroImageUrl} alt="Personal Trainer Wagner Noronha"/></div><span className="verticalCaption">FOCO · FORÇA · RESULTADOS</span></div>
+  <div className="authPanel"><div className="authPanelInner"><div className="eyebrow"><span className="tinyStar">✦</span> ÁREA EXCLUSIVA</div><h2>{mode==='login'?'Seu próximo nível começa aqui.':mode==='register'?'Junte-se à equipe Wagner.':'Configuração inicial'}</h2><p className="muted">{mode==='login'?'Acesse seus treinos, planos e acompanhamento.':mode==='register'?'Crie sua conta para escolher um plano e começar.':'Cadastre o primeiro administrador com seu token protegido.'}</p>
+  <div className="authTabs"><button className={mode==='login'?'active':''} onClick={()=>setMode('login')}>Entrar</button><button className={mode==='register'?'active':''} onClick={()=>setMode('register')}>Criar conta</button>{setup&&<button className={mode==='setup'?'active':''} onClick={()=>setMode('setup')}>Configurar ADM</button>}</div>
+  <Notice value={notice} onClose={clear}/><form className="authForm" onSubmit={submit}>{mode!=='login'&&<Input label="Nome completo"><input required minLength={3} placeholder="Seu nome" value={form.name} onChange={e=>set('name',e.target.value)}/></Input>}
+  {mode==='register'&&<div className="formGrid"><Input label="CPF"><input required inputMode="numeric" maxLength={14} placeholder="Somente números" value={form.cpf} onChange={e=>set('cpf',e.target.value)}/></Input><Input label="WhatsApp"><input required type="tel" placeholder="(92) 99999-9999" value={form.phone} onChange={e=>set('phone',e.target.value)}/></Input></div>}
+  <Input label="E-mail"><input required type="email" autoComplete="email" placeholder="voce@exemplo.com" value={form.email} onChange={e=>set('email',e.target.value)}/></Input><Input label="Senha"><input required minLength={8} type="password" autoComplete={mode==='login'?'current-password':'new-password'} placeholder="Mínimo de 8 caracteres" value={form.password} onChange={e=>set('password',e.target.value)}/></Input>
+  {mode==='setup'&&<Input label="Token secreto SETUP_TOKEN"><input required type="password" value={form.token} onChange={e=>set('token',e.target.value)} placeholder="Configurado no Cloudflare"/></Input>}
+  <Button type="submit" disabled={busy} className="authSubmit">{busy?'Processando...':mode==='login'?'Acessar minha conta':mode==='register'?'Criar conta e escolher plano':'Criar administrador'} <ArrowRight size={18}/></Button></form><div className="authBottom"><ShieldCheck size={17}/><span>Pagamento Pix conferido e liberado pelo personal.</span></div></div></div></div></div>;
 }
 
-function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+type CommonProps={page:string;navigate:(p:string)=>void;user:User;settings:Settings;onUser:()=>Promise<User|null>;show:(m:string,e?:boolean)=>void};
+function StudentRoutes({page,navigate,user,settings,onUser,show}:CommonProps){const[content,setContent]=useState<any>(null),[loading,setLoading]=useState(false);const active=user.subscriptionStatus==='ACTIVE';
+ const load=()=>{if(!active){setContent(null);return;}setLoading(true);get('/student/content').then(setContent).catch((e:any)=>{show(e.message,true);setContent(null)}).finally(()=>setLoading(false));};
+ useEffect(load,[user.id,user.subscriptionStatus]);
+ if(page==='plans')return <StudentPlans user={user} onUser={onUser} show={show}/>;
+ if(page==='consultation')return <StudentConsultation user={user} show={show}/>;
+ if(page==='profile')return <StudentProfile user={user} onUser={onUser} show={show}/>;
+ if(!active)return <section><PageTitle title="Sua transformação começa aqui" subtitle="Escolha seu plano, envie o comprovante e aguarde a confirmação do personal."/><div className="welcomeLocked"><div><div className="labelGold">BEM-VINDO À EQUIPE</div><h2>O primeiro passo é <em>seu.</em></h2><p>Seu cadastro já está pronto! Selecione um plano, pague diretamente por Pix e acompanhe a aprovação no aplicativo.</p><Button onClick={()=>navigate('plans')}><Wallet size={18}/> Escolher meu plano <ArrowRight size={17}/></Button></div><img src={settings.insideImageUrl} alt="Personal Trainer Wagner Noronha"/></div><StudentPlanHint navigate={navigate}/></section>;
+ if(loading&&!content)return <div className="empty">Carregando seu programa...</div>;
+ const exercises=content?.exercises||[],tips=content?.tips||[],assignments=content?.assignments||[],completions=content?.completions||[],diet=content?.diet||[];
+ if(page==='home'){
+  const today=assignments.filter((x:any)=>Number(x.weekday)===new Date().getDay());const done=today.filter((x:any)=>completions.some((c:any)=>Number(c.exerciseId)===Number(x.exerciseId)&&dateSafe(c.completedDate)===dateSafe(new Date().toISOString()))).length;
+  return <><PageTitle title={`Olá, ${user.name.split(' ')[0]}! 👋`} subtitle="Disciplina, constância e acompanhamento profissional para cada conquista."/><div className="memberHero"><div className="memberHeroCopy"><div className="labelGold">SEU TREINO. SEU RITMO.</div><h2>{settings.heroTitle}</h2><p>{settings.heroSubtitle}</p><div className="memberHeroActions"><Button onClick={()=>navigate('personalized')}>Meu treino de hoje <ArrowRight size={18}/></Button><Button variant="outline" onClick={()=>navigate('plans')}>Minha assinatura</Button></div></div><img src={settings.insideImageUrl} alt="Wagner Noronha no aplicativo"/></div>
+   <div className="statsGrid"><Stat icon={CheckCircle2} label="Exercícios de hoje" value={`${done}/${today.length}`} caption="concluídos"/><Stat icon={Dumbbell} label="Biblioteca" value={String(exercises.length)} caption="exercícios disponíveis"/><Stat icon={Clock} label="Assinatura até" value={formatDate(user.subscriptionUntil)} caption={user.activePlan?.planName||'Plano ativo'}/></div>
+   <div className="twoCol"><section className="panel"><div className="panelHeader"><h3>Programa de hoje</h3><button onClick={()=>navigate('personalized')}>Ver tudo <ArrowRight size={15}/></button></div>{today.length?today.slice(0,4).map((x:any)=><div className="compactLine" key={x.id}><div className="compactIcon"><Dumbbell size={17}/></div><div><b>{x.name}</b><small>{x.sets} séries · {x.reps||x.duration||'Conforme orientação'}</small></div></div>):<Empty title="Treino ainda não definido" description="Seu personal poderá organizar seu treino para hoje." icon={CalendarDays}/>}</section><section className="panel coachSide"><div><div className="labelGold">ACOMPANHAMENTO PROFISSIONAL</div><h3>Treine com segurança e orientação.</h3><p>Veja a demonstração dos movimentos, respeite o descanso e registre suas séries concluídas.</p><Button variant="outline" onClick={()=>navigate('workouts')}>Explorar exercícios <ArrowRight size={16}/></Button></div><div className="coachSideIllustration"><Activity size={100}/></div></section></div></>;
+ }
+ if(page==='workouts')return <><PageTitle title="Biblioteca de exercícios" subtitle="Técnica, orientações e vídeos do seu personal em cada movimento."/><ExerciseLibrary items={exercises} completions={completions} onComplete={load} show={show}/></>;
+ if(page==='personalized'){const today=new Date().getDay();const items=assignments.filter((x:any)=>Number(x.weekday)===today);return <><PageTitle title={`Treino de hoje · ${days[today]}`} subtitle="Exercícios selecionados especialmente para você."/><div className="sectionRibbon"><CalendarDays size={19}/> Sua programação semanal é organizada pelo seu personal trainer.</div>{items.length?<ExerciseLibrary items={items} completions={completions} onComplete={load} show={show}/>:<Empty title="Nenhum treino para hoje" description="Peça ao Wagner que organize suas atividades para este dia." icon={CalendarDays}/>}<div className="dayScroll">{days.map((d,i)=><span className={i===today?'today':''} key={d}>{d.slice(0,3)}</span>)}</div></>}
+ if(page==='diet')return <><PageTitle title="Minha dieta" subtitle="Orientações alimentares cadastradas pelo profissional responsável."/>{diet.length?<div className="gridCards">{diet.map((d:any)=><article className="panel mealCard" key={d.id}><span className="mealTime">{d.time||'Refeição'}</span><h3>{d.title}</h3><p>{d.description}</p></article>)}</div>:<Empty title="Nenhum plano alimentar cadastrado" description="Peça ao profissional habilitado que disponibilize suas orientações alimentares." icon={Utensils}/>}<p className="disclaimer">Planos alimentares e condutas nutricionais devem ser elaborados por profissional habilitado.</p></>;
+ if(page==='tips')return <><PageTitle title="Dicas do personal" subtitle="Orientação e conteúdo exclusivo para sua evolução."/>{tips.length?<div className="gridCards">{tips.map((t:any)=><article className="panel tipCard" key={t.id}>{t.imageUrl?<img src={t.imageUrl} alt="Capa da dica"/>:<div className="tipIcon"><Activity size={24}/></div>}<span className="labelGold">{t.category||'DICAS WAGNER'}</span><h3>{t.title}</h3><p>{t.description}</p>{t.videoUrl&&<video controls playsInline src={t.videoUrl}/>}</article>)}</div>:<Empty title="Sem dicas disponíveis" description="Novos conteúdos aparecerão aqui quando forem cadastrados."/>}</>;
+ return <Empty title="Área em preparação" description="Selecione uma opção no menu."/>;
+}
+function Stat({icon:Icon,label,value,caption}:{icon:any;label:string;value:string;caption?:string}){return <article className="stat"><span className="statIcon"><Icon size={22}/></span><span className="statLabel">{label}</span><strong>{value}</strong>{caption&&<small>{caption}</small>}</article>}
+function StudentPlanHint({navigate}:{navigate:(s:string)=>void}){return <div className="lockedSteps">{[['01','Escolha o plano'],['02','Copie a chave Pix'],['03','Envie o comprovante'],['04','Aguarde a liberação']].map(([number,label])=><div key={number}><b>{number}</b><span>{label}</span></div>)}<button onClick={()=>navigate('plans')}><ArrowRight size={20}/></button></div>}
 
-  useEffect(() => {
-    api
-      .me()
-      .then((x) => setUser(x.user))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) return <Splash />;
-
-  if (!user) {
-    return (
-      <Auth
-        onAuth={(u, t) => {
-          localStorage.setItem('afit_token', t);
-          setUser(u);
-        }}
-      />
-    );
-  }
-
-  return (
-    <Shell
-      user={user}
-      onLogout={() => {
-        localStorage.removeItem('afit_token');
-        setUser(null);
-      }}
-      refresh={() => {
-        api.me().then((x) => setUser(x.user)).catch(() => {});
-      }}
-    />
-  );
+function StudentPlans({user,onUser,show}:{user:User;onUser:()=>Promise<User|null>;show:(m:string,e?:boolean)=>void}){
+ const[plans,setPlans]=useState<Plan[]>([]),[requests,setRequests]=useState<PlanRequest[]>([]),[busy,setBusy]=useState(false),[sending,setSending]=useState<number|null>(null);const[verify,setVerify]=useState<number|null>(null),[selected,setSelected]=useState<Plan|null>(null),[agree,setAgree]=useState(false),[proof,setProof]=useState<File|null>(null);
+ const load=()=>{get<{plans:Plan[]}>('/public/plans').then(r=>setPlans(r.plans)).catch(()=>{});get<{items:PlanRequest[]}>('/student/requests').then(r=>setRequests(r.items)).catch(e=>show(e.message,true));};useEffect(()=>{void load()},[]);
+ const pending=requests.find(r=>r.status==='AWAITING_PROOF'||r.status==='PROOF_SENT');
+ const choose=async()=>{if(!selected||!agree)return;setBusy(true);try{await post('/student/requests',{planId:selected.id});setSelected(null);setAgree(false);show('Plano escolhido! Confira a chave Pix e acompanhe seu pedido abaixo.');load();}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ const sendProof=async(id:number)=>{if(!proof)return show('Selecione uma imagem ou PDF do comprovante.',true);setSending(id);try{await upload(`/student/requests/${id}/proof`,proof);setProof(null);show('Comprovante enviado! O Wagner fará a conferência e liberará seu acesso.');load();}catch(e:any){show(e.message,true)}finally{setSending(null)}};
+ const copy=async(value:string)=>{try{await navigator.clipboard.writeText(value);show('Chave Pix copiada!')}catch{show('Selecione e copie a chave Pix exibida.')}};
+ const showProof=async(id:number)=>{try{const blob=await previewPrivate(`/student/requests/${id}/proof`);window.open(blob,'_blank','noopener,noreferrer')}catch(e:any){show(e.message,true)}};
+ return <><PageTitle title="Planos e assinaturas" subtitle="Escolha seu plano, faça o Pix para o personal e envie o comprovante por aqui."/>
+  {user.subscriptionStatus==='ACTIVE'&&<div className="activeBanner"><CheckCircle2 size={22}/><div><b>Seu acesso está ativo</b><span>{user.activePlan?.planName||'Plano ativo'} · válido até {formatDate(user.subscriptionUntil)}</span></div></div>}
+  {pending&&<section className="panel pendingBox"><div className="panelHeader"><div><div className="labelGold">SEU PEDIDO ATUAL</div><h3>{pending.planName} · {money(pending.price)}</h3></div><Status value={pending.status}/></div>
+   {pending.price>0?<><p>Este plano foi selecionado e confirmado em {formatDateTime(pending.requestedAt)}. Faça o Pix e envie seu comprovante.</p><div className="pixBlock"><div><small>CHAVE PIX DO PERSONAL</small><strong className="pixKey">{pending.pixKey}</strong><span>{pending.recipientName||'Beneficiário cadastrado pelo personal'}</span></div><Button variant="outline" onClick={()=>copy(pending.pixKey)}><Copy size={16}/> Copiar Pix</Button></div>
+    {pending.status==='PROOF_SENT'&&<div className="waiting"><Clock size={19}/><div><b>Seu comprovante está em análise.</b><span>O acesso só será liberado quando o administrador confirmar o pagamento.</span></div></div>}
+    <div className="uploadReceipt"><Input label={pending.status==='PROOF_SENT'?'Substituir comprovante (se necessário)':'Enviar comprovante Pix (JPG, PNG, WebP ou PDF • até 8 MB)'}><input accept="image/jpeg,image/png,image/webp,application/pdf" type="file" onChange={e=>setProof(e.target.files?.[0]||null)}/></Input><Button disabled={!proof||sending===pending.id} onClick={()=>sendProof(pending.id)}><Upload size={17}/>{sending===pending.id?'Enviando...':'Enviar comprovante'}</Button>{pending.proofName&&<Button variant="ghost" onClick={()=>showProof(pending.id)}><Eye size={15}/> Ver meu comprovante</Button>}</div></>:
+   <div className="waiting"><Clock size={19}/><span>Plano gratuito selecionado. Aguarde a liberação manual pelo personal.</span></div>}
+   {pending.status==='AWAITING_PROOF'&&<button className="textDanger" onClick={async()=>{if(!confirm('Cancelar a solicitação atual?'))return;try{await post(`/student/requests/${pending.id}/cancel`,{});load()}catch(e:any){show(e.message,true)}}}>Cancelar solicitação</button>}
+  </section>}
+  <div className="pricingGrid">{plans.map((p,i)=><article key={p.id} className={'pricingCard '+(i===plans.length-1&&plans.length>1?'featured':'')}><div className="pricingTop"><span>{Number(p.price)===0?'PLANO GRATUITO':i===1?'MAIS ESCOLHIDO':'ACOMPANHAMENTO'}</span><Wallet size={22}/></div><h3>{p.name}</h3><div className="price"><strong>{money(p.price)}</strong><span>/{p.period||`${p.durationDays} dias`}</span></div><p>{p.description}</p><ul><li><Check size={16}/> Treinamento personalizado</li><li><Check size={16}/> Acesso a exercícios e vídeos</li><li><Check size={16}/> Conteúdo exclusivo</li><li><Check size={16}/> Validade de {p.durationDays} dias</li></ul><Button disabled={!!pending} onClick={()=>{setSelected(p);setAgree(false)}}>Selecionar este plano <ArrowRight size={16}/></Button></article>)}</div>
+  <div className="historyTitle"><h3>Histórico de solicitações</h3><button onClick={()=>{load();onUser()}}><RefreshCw size={15}/> Atualizar</button></div>
+  {requests.length?<div className="panel listRows">{requests.map(r=><div key={r.id} className="historyRow"><div><strong>{r.planName}</strong><small>Pedido #{r.id} · {formatDateTime(r.requestedAt)}</small></div><div><Status value={r.status}/>{r.activatedUntil&&<small>Até {formatDate(r.activatedUntil)}</small>}</div></div>)}</div>:<Empty title="Nenhuma solicitação" description="Seu primeiro pedido aparecerá aqui após escolher um plano." icon={FileCheck2}/>}
+  {selected&&<div className="modalOverlay" onMouseDown={()=>setSelected(null)}><section className="modalPanel modalNarrow" onMouseDown={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setSelected(null)}><X size={20}/></button><div className="labelGold">CONFIRMAR ESCOLHA</div><h2>{selected.name}</h2><div className="confirmPrice">{money(selected.price)} <small>· {selected.durationDays} dias</small></div><p>Ao confirmar, o plano será registrado para o Wagner visualizar no painel. {selected.price>0?'Depois você receberá a chave Pix e poderá anexar o comprovante.':'O personal precisará liberar seu acesso manualmente.'}</p><label className="agree"><input type="checkbox" checked={agree} onChange={e=>setAgree(e.target.checked)}/><span>Confirmo que escolhi este plano e entendo que o acesso depende da aprovação do administrador.</span></label><Button disabled={!agree||busy} onClick={choose}>{busy?'Confirmando...':'Confirmar meu plano'} <CheckCircle2 size={17}/></Button></section></div>}
+ </>;
 }
 
-const Splash = () => (
-  <div className="center">
-    <img src="/afit-logo.jpg" className="logo" alt="AFIT" />
-    <div className="spinner" />
-  </div>
-);
-
-function InstallCard() {
-  const { canInstall, installed, isIOS, install } = useInstallPrompt();
-  const [showIOS, setShowIOS] = useState(false);
-
-  if (installed) return null;
-
-  return (
-    <div className="installCard">
-      <div>
-        <b>Instale o AFIT no celular</b>
-        <small>Use em tela cheia, como um aplicativo.</small>
-      </div>
-
-      {canInstall ? (
-        <button onClick={install}>Instalar</button>
-      ) : isIOS ? (
-        <button onClick={() => setShowIOS(!showIOS)}>Como instalar</button>
-      ) : null}
-
-      {showIOS && (
-        <p>
-          No iPhone: toque em <b>Compartilhar</b> e depois em{' '}
-          <b>Adicionar à Tela de Início</b>.
-        </p>
-      )}
-    </div>
-  );
+function ExerciseLibrary({items,completions,onComplete,show}:{items:any[];completions:any[];onComplete:()=>void;show:(m:string,e?:boolean)=>void}){
+ const[search,setSearch]=useState(''),[category,setCategory]=useState('Todos'),[selected,setSelected]=useState<any>(null),[series,setSeries]=useState(1),[rest,setRest]=useState(0),[running,setRunning]=useState(false),[resting,setResting]=useState(false),[busy,setBusy]=useState(false);
+ useEffect(()=>{if(rest<=0)return;const timer=window.setTimeout(()=>setRest(n=>n-1),1000);return()=>clearTimeout(timer)},[rest]);
+ const categories=['Todos',...Array.from(new Set(items.map(x=>x.trainingCategory||'Musculação')))];const filtered=items.filter(x=>(category==='Todos'||x.trainingCategory===category)&&String(x.name).toLowerCase().includes(search.toLowerCase()));
+ const isDone=(id:number)=>completions.some(c=>Number(c.exerciseId)===Number(id)&&dateSafe(c.completedDate)===dateSafe(new Date().toISOString()));
+ const complete=async()=>{if(!selected||rest>0)return;setBusy(true);try{await post('/student/workout-complete',{exerciseId:selected.exerciseId||selected.id});show('Exercício concluído e registrado!');setRunning(false);setSelected(null);onComplete()}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ const select=(x:any)=>{setSelected(x);setSeries(1);setRest(0);setResting(false);setRunning(false)};
+ return <><div className="filterLine"><div className="searchBox"><Search size={17}/><input placeholder="Buscar exercício" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="categoryPills">{categories.map(c=><button key={String(c)} className={category===c?'active':''} onClick={()=>setCategory(String(c))}>{String(c)}</button>)}</div></div>
+  {filtered.length?<div className="exerciseGrid">{filtered.map((ex:any)=><button key={ex.id} className="exerciseCard" onClick={()=>select(ex)}><div className="exThumb">{ex.imageUrl?<img src={ex.imageUrl} alt={ex.name}/>:<Dumbbell size={34}/>}<div className="exView"><ChevronRight size={19}/></div></div><div className="exDetails"><span className="labelGold">{ex.trainingCategory||'Musculação'}</span><h3>{ex.name}</h3><p>{ex.muscleGroup||ex.level||'Condicionamento físico'}</p><div className="exFooter"><span><Clock size={14}/>{ex.sets||1} séries · {ex.reps||ex.duration||'Definido pelo personal'}</span>{isDone(Number(ex.exerciseId||ex.id))&&<CheckCircle2 color="#d8b65e" size={17}/>}</div></div></button>)}</div>:<Empty title="Nenhum exercício encontrado" description="Tente outra categoria ou termo de pesquisa." icon={Search}/>}
+  {selected&&<div className="modalOverlay" onMouseDown={()=>setSelected(null)}><article className="modalPanel exerciseModal" onMouseDown={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setSelected(null)}><X size={20}/></button>{selected.videoUrl?<video controls playsInline poster={selected.imageUrl||''} src={selected.videoUrl}/>:<div className="videoEmpty"><Video size={34}/><span>Vídeo disponível quando cadastrado pelo Wagner</span></div>}<div className="labelGold">{selected.trainingCategory} · {selected.level}</div><h2>{selected.name}</h2><div className="metrics"><div><strong>{selected.sets||1}</strong><span>Séries</span></div><div><strong>{selected.executionMode==='Tempo'?selected.duration:selected.reps||'-'}</strong><span>{selected.executionMode==='Tempo'?'Duração':'Repetições'}</span></div><div><strong>{selected.rest||'60s'}</strong><span>Descanso</span></div></div>
+    {([['Sobre',selected.description],['Objetivo',selected.objective],['Como executar',selected.instructions],['Benefícios',selected.benefits],['Erros comuns',selected.commonErrors],['Equipamentos',selected.equipment]] as const).filter(([,v])=>!!v).map(([h,v])=><details key={h} className="exAccordion"><summary>{h}<ChevronDown size={17}/></summary><p>{v}</p></details>)}
+    {isDone(Number(selected.exerciseId||selected.id))?<div className="completedWorkout"><CheckCircle2 size={20}/> Exercício já concluído hoje</div>:<div className="runner">{!running?<Button onClick={()=>{setRunning(true);setSeries(1)}}><Dumbbell size={17}/> Iniciar exercício</Button>:<><strong>Série {series} de {selected.sets||1}</strong>{resting?<><div className="restClock"><Clock size={22}/> DESCANSO <span>{rest}s</span></div>{series<Number(selected.sets||1)?<Button disabled={rest>0} onClick={()=>{setSeries(s=>s+1);setResting(false)}}>Iniciar próxima série <ArrowRight size={16}/></Button>:<Button disabled={rest>0||busy} onClick={complete}>{busy?'Salvando...':'Concluir exercício'} <Check size={16}/></Button>}</>:<Button onClick={()=>{const seconds=Number(String(selected.rest||'60').match(/\d+/)?.[0]||60);setRest(seconds);setResting(true)}}>Finalizar série {series}</Button>}</>}</div>}
+  </article></div>}
+ </>;
 }
 
-function Auth({ onAuth }: { onAuth: (u: User, t: string) => void }) {
-  const [mode, setMode] = useState<'login' | 'register' | 'setup'>('login');
-  const [form, setForm] = useState<any>({
-    name: '',
-    email: '',
-    password: '',
-    cpf: '',
-    phone: '',
-    setupToken: '',
-  });
-  const [error, setError] = useState('');
-  const [setupAvailable, setSetupAvailable] = useState(false);
-  const [forgot, setForgot] = useState(false);
-  const [reset, setReset] = useState({email:'',cpf5:'',password:'',confirm:''});
-
-  useEffect(() => {
-    api
-      .setupStatus()
-      .then((r) => setSetupAvailable(!r.configured))
-      .catch(() => {});
-  }, []);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    try {
-      if (mode === 'setup') {
-        await api.setupAdmin({
-          name: form.name,
-          email: form.email,
-          password: form.password,
-          setupToken: form.setupToken,
-        });
-
-        setMode('login');
-        setError(
-          'Administrador criado. Agora entre com o e-mail e a senha cadastrados.',
-        );
-        return;
-      }
-
-      const r =
-        mode === 'login'
-          ? await api.login(form.email, form.password)
-          : await api.register(form);
-
-      onAuth(r.user, r.token);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  };
-
-  return (
-    <main className="auth">
-      <section className="hero">
-        <img className="brand" src="/afit-logo.jpg" alt="AFIT" />
-        <img className="coach" src="/personal-afit.jpg" alt="Personal AFIT" />
-
-        <div className="heroCopy">
-          <h1>
-            Seu corpo.
-            <br />
-            Sua meta.
-            <br />
-            <span>Nosso plano.</span>
-          </h1>
-          <p>
-            Musculação, funcional, consultoria e acompanhamento personalizado.
-          </p>
-        </div>
-      </section>
-
-      <section className="authSide">
-        <InstallCard />
-
-        <section className="authCard">
-          <div className="tabs">
-            <button
-              type="button"
-              className={mode === 'login' ? 'active' : ''}
-              onClick={() => setMode('login')}
-            >
-              Entrar
-            </button>
-
-            <button
-              type="button"
-              className={mode === 'register' ? 'active' : ''}
-              onClick={() => setMode('register')}
-            >
-              Criar conta
-            </button>
-
-            {setupAvailable && (
-              <button
-                type="button"
-                className={mode === 'setup' ? 'active' : ''}
-                onClick={() => setMode('setup')}
-              >
-                Configurar ADM
-              </button>
-            )}
-          </div>
-
-          <form onSubmit={submit}>
-            {mode !== 'login' && (
-              <label>
-                Nome completo
-                <input
-                  required
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </label>
-            )}
-
-            {mode === 'register' && (
-              <>
-                <label>
-                  CPF
-                  <input
-                    required
-                    value={form.cpf}
-                    onChange={(e) => setForm({ ...form, cpf: e.target.value })}
-                  />
-                </label>
-
-                <label>
-                  Telefone
-                  <input
-                    required
-                    value={form.phone}
-                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                  />
-                </label>
-              </>
-            )}
-
-            <label>
-              E-mail
-              <input
-                type="email"
-                required
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-              />
-            </label>
-
-            <label>
-              Senha
-              <input
-                type="password"
-                minLength={8}
-                required
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-              />
-            </label>
-
-            {mode === 'setup' && (
-              <label>
-                SETUP_TOKEN
-                <input
-                  type="password"
-                  required
-                  value={form.setupToken}
-                  onChange={(e) =>
-                    setForm({ ...form, setupToken: e.target.value })
-                  }
-                />
-              </label>
-            )}
-
-            {error && (
-              <div
-                className={
-                  error.startsWith('Administrador criado') ? 'notice' : 'error'
-                }
-              >
-                {error}
-              </div>
-            )}
-
-            <button className="primary">
-              {mode === 'login'
-                ? 'Acessar minha conta'
-                : mode === 'setup'
-                  ? 'Criar administrador'
-                  : 'Continuar para os planos'}
-            </button>
-            {mode === 'login' && <button type="button" className="linkButton" onClick={()=>setForgot(!forgot)}>Esqueci a senha</button>}
-          </form>
-          {forgot && <form className="resetBox" onSubmit={async e=>{e.preventDefault(); if(reset.password!==reset.confirm){setError('As senhas não conferem.');return;} try{await api.resetPassword({email:reset.email,cpf5:reset.cpf5,password:reset.password}); setError('Senha alterada com sucesso. Entre com a nova senha.'); setForgot(false);}catch(err:any){setError(err.message)}}}>
-            <h3>Recuperar senha</h3><label>E-mail<input type="email" required value={reset.email} onChange={e=>setReset({...reset,email:e.target.value})}/></label><label>5 primeiros números do CPF<input required maxLength={5} value={reset.cpf5} onChange={e=>setReset({...reset,cpf5:e.target.value.replace(/\D/g,'')})}/></label><label>Nova senha<input type="password" minLength={8} required value={reset.password} onChange={e=>setReset({...reset,password:e.target.value})}/></label><label>Confirmar nova senha<input type="password" minLength={8} required value={reset.confirm} onChange={e=>setReset({...reset,confirm:e.target.value})}/></label><button className="primary">Alterar senha</button>
-          </form>}
-
-          <small>
-            O mesmo login identifica automaticamente administrador e aluno.
-          </small>
-        </section>
-      </section>
-    </main>
-  );
+function StudentConsultation({user,show}:{user:User;show:(m:string,e?:boolean)=>void}){
+ const[data,setData]=useState<any>(null),[busy,setBusy]=useState(false),[selected,setSelected]=useState<number|null>(null),[proof,setProof]=useState<File|null>(null);
+ const load=()=>get('/student/consultation').then(setData).catch(e=>show(e.message,true));useEffect(()=>{load();const timer=setInterval(load,30000);return()=>clearInterval(timer)},[]);
+ const action=async(path:string,b:any={})=>{setBusy(true);try{await post('/student/consultation/'+path,b);show('Solicitação registrada com sucesso.');load()}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ const current=data?.request;
+ return <><PageTitle title="Consultoria online" subtitle="Atendimento individual com Wagner Noronha, agendamento e pagamento Pix direto."/>
+  {!current?<div className="consultHero"><div className="consultCopy"><div className="labelGold">ATENDIMENTO INDIVIDUAL</div><h2>Orientação personalizada, esteja onde estiver.</h2><p>Solicite atendimento online e escolha um horário apresentado pelo seu personal.</p><div className="consultPrice">{money(300)} <small>aproximadamente 60 minutos</small></div><Button disabled={busy} onClick={()=>action('request')}>Solicitar consultoria <ArrowRight size={17}/></Button></div><img src="/brand/wagner-hero.jpg" alt="Wagner Noronha"/></div>:
+  <section className="panel consultationState"><div className="panelHeader"><h3>Sua consultoria</h3><Status value={current.status}/></div><div className="consultLine"><CalendarDays size={17}/> Pedido em {formatDateTime(current.requestedAt)}</div>
+  {current.status==='REQUESTED'&&<p>Wagner recebeu seu pedido. As datas disponíveis aparecerão aqui quando forem cadastradas.</p>}
+  {current.status==='AVAILABILITY_SENT'&&<><h4>Escolha seu horário</h4><div className="slotGrid">{data.slots.filter((x:any)=>x.status==='AVAILABLE').map((s:any)=><button className={selected===s.id?'chosen':''} key={s.id} onClick={()=>setSelected(s.id)}><CalendarDays size={18}/>{formatDateTime(s.startsAt)}</button>)}</div><Button disabled={busy||!selected} onClick={()=>action('select',{slotId:selected})}>Confirmar horário</Button></>}
+  {current.status==='AWAITING_PAYMENT'&&<><div className="consultLine"><CalendarDays size={17}/> {formatDateTime(current.selectedStartsAt)}</div><div className="pixBlock"><div><small>PIX PARA CONSULTORIA · {money(current.price)}</small><strong className="pixKey">{data.pixKey||'Chave Pix não cadastrada'}</strong><span>{data.pixRecipient||'Wagner Noronha'}</span></div><Button variant="outline" disabled={!data.pixKey} onClick={()=>navigator.clipboard.writeText(data.pixKey).then(()=>show('Pix copiado!')).catch(()=>show('Copie a chave manualmente.'))}><Copy size={16}/> Copiar</Button></div><div className="uploadReceipt"><Input label="Comprovante da consultoria (JPG, PNG, WebP ou PDF)"><input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={e=>setProof(e.target.files?.[0]||null)}/></Input><Button disabled={!proof||busy} onClick={async()=>{setBusy(true);try{await upload('/student/consultation/proof',proof!);show('Comprovante enviado ao personal.');setProof(null);load()}catch(e:any){show(e.message,true)}finally{setBusy(false)}}}><Upload size={17}/> Enviar comprovante</Button></div>{current.proofName&&<div className="waiting"><Clock size={18}/> Comprovante recebido. Aguarde a conferência manual.</div>}</>}
+  {current.status==='CONFIRMED'&&<div className="confirmed"><CheckCircle2 size={32}/><h3>Consultoria confirmada!</h3><p>Pagamento validado pelo personal. Atendimento: {formatDateTime(current.selectedStartsAt)}</p>{current.meetingUrl?<a className="btn btn-primary" href={current.meetingUrl} target="_blank" rel="noopener noreferrer">Entrar na reunião <ArrowRight size={17}/></a>:<p>O link do Google Meet ou Zoom será enviado aqui pelo Wagner.</p>}</div>}
+  {current.status==='COMPLETED'&&<div className="confirmed"><BadgeCheck size={29}/> Atendimento concluído.</div>}
+  </section>}
+ </>;
+}
+function StudentProfile({user,onUser,show}:{user:User;onUser:()=>Promise<User|null>;show:(m:string,e?:boolean)=>void}){
+ const[busy,setBusy]=useState(false),[old,setOld]=useState(''),[password,setPassword]=useState('');const change=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);try{await post('/account/password',{currentPassword:old,newPassword:password});show('Senha alterada.');setOld('');setPassword('')}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ return <><PageTitle title="Meu perfil" subtitle="Sua conta, foto e acesso ao treinamento."/><div className="twoCol"><section className="panel profilePanel"><div className="profileImage">{user.profileImageUrl?<img src={user.profileImageUrl} alt="Foto do aluno"/>:<UserRound size={45}/>}</div><div><h2>{user.name}</h2><p>{user.email}</p><Status value={user.subscriptionStatus==='ACTIVE'?'APPROVED':'AWAITING_PROOF'}/></div><label className="uploadPhoto"><ImagePlus size={17}/> Alterar minha foto<input type="file" accept="image/jpeg,image/png,image/webp" onChange={async e=>{const f=e.target.files?.[0];if(!f)return;try{await upload('/student/profile-photo',f);await onUser();show('Foto de perfil atualizada.')}catch(e:any){show(e.message,true)}}}/></label></section>
+ <section className="panel"><h3>Segurança da conta</h3><p className="muted">Altere sua senha para manter seus dados protegidos.</p><form className="adminForm" onSubmit={change}><Input label="Senha atual"><input type="password" required value={old} onChange={e=>setOld(e.target.value)}/></Input><Input label="Nova senha (mínimo 8 caracteres)"><input type="password" required minLength={8} value={password} onChange={e=>setPassword(e.target.value)}/></Input><Button disabled={busy} type="submit"><KeyRound size={16}/> Alterar senha</Button></form></section></div></>;
 }
 
-function Shell({
-  user,
-  onLogout,
-  refresh,
-}: {
-  user: User;
-  onLogout: () => void;
-  refresh: () => void;
-}) {
-  const locked =
-    user.role === 'student' && user.subscriptionStatus !== 'ACTIVE';
-
-  const [page, setPage] = useState(user.role === 'admin' ? 'admin' : 'home');
-
-  const adminNav: Array<[string, string]> = [
-    ['admin', 'Painel'],
-    ['exercises', 'Exercícios'],
-    ['tips', 'Dicas'],
-    ['diets', 'Dietas'],
-    ['students', 'Alunos'],
-    ['assignments', 'Treinos personalizados'],
-    ['consultations', 'Consultorias'],
-  ];
-
-  const studentNav: Array<[string, string]> = [
-    ['home', 'Início'],
-    ['workouts', locked ? '🔒 Treinos' : 'Treinos'],
-    ['personalized', locked ? '🔒 Personalizado' : 'Treino personalizado'],
-    ['profile', 'Meu perfil'],
-    ['mytips', locked ? '🔒 Dicas' : 'Dicas'],
-    ['chat', 'Consultoria'],
-    ['plans', 'Planos'],
-  ];
-
-  const nav = user.role === 'admin' ? adminNav : studentNav;
-  const restrictedPages = ['workouts', 'personalized', 'mytips'];
-
-  let content: React.ReactNode;
-
-  if (user.role === 'admin') {
-    content = <Admin page={page} />;
-  } else if (page === 'plans') {
-    content = <Plans refresh={refresh} />;
-  } else if (locked && restrictedPages.includes(page)) {
-    content = (
-      <LockedFeature page={page} onPlans={() => setPage('plans')} />
-    );
-  } else if (locked && page === 'home') {
-    content = (
-      <StudentLockedHome
-        name={user.name}
-        onPlans={() => setPage('plans')}
-      />
-    );
-  } else {
-    content = <Student page={page} user={user} refresh={refresh} />;
-  }
-
-  return (
-    <div className="app">
-      <aside>
-        <img src="/afit-logo.jpg" className="sideLogo" alt="AFIT" />
-
-        <nav>
-          {nav.map(([p, t]) => (
-            <button
-              key={p}
-              className={page === p ? 'active' : ''}
-              onClick={() => {
-                setPage(p);
-                document.body.classList.remove('navopen');
-              }}
-            >
-              {t}
-            </button>
-          ))}
-        </nav>
-
-        <button className="ghost" onClick={onLogout}>
-          Sair
-        </button>
-      </aside>
-
-      <header>
-        <div>
-          <b>Olá, {user.name.split(' ')[0]}!</b>
-
-          <small>
-            {user.role === 'admin'
-              ? 'Área administrativa'
-              : user.subscriptionStatus === 'ACTIVE'
-                ? 'Plano ativo'
-                : 'Aguardando pagamento'}
-          </small>
-        </div>
-
-        <button
-          className="menu"
-          onClick={() => document.body.classList.toggle('navopen')}
-        >
-          ☰
-        </button>
-      </header>
-
-      <main className="content">
-        <InstallCard />
-        {content}
-      </main>
-
-      <nav className="mobileNav">
-        {nav.slice(0, 5).map(([p, t]) => (
-          <button
-            key={p}
-            className={page === p ? 'active' : ''}
-            onClick={() => setPage(p)}
-          >
-            {t}
-          </button>
-        ))}
-      </nav>
-    </div>
-  );
+type AdminProps={user:User;settings:Settings;onSettings:()=>void;onUser:()=>Promise<User|null>;show:(m:string,e?:boolean)=>void};
+function AdminRoutes({page,navigate,user,settings,onSettings,onUser,show}:CommonProps&{onSettings:()=>void}){
+ if(page==='dashboard')return <AdminDashboard navigate={navigate} settings={settings} show={show}/>;
+ if(page==='requests')return <AdminRequests show={show}/>;
+ if(page==='plans')return <AdminPlans show={show}/>;
+ if(page==='students')return <AdminStudents show={show}/>;
+ if(page==='assignments')return <AdminAssignments show={show}/>;
+ if(page==='exercises'||page==='tips'||page==='diets')return <AdminContent kind={page} show={show}/>;
+ if(page==='consultations')return <AdminConsultations show={show}/>;
+ if(page==='branding')return <AdminBranding settings={settings} onSettings={onSettings} show={show}/>;
+ if(page==='account')return <AdminAccount user={user} onUser={onUser} show={show}/>;
+ return <Empty title="Selecione um módulo" description="Escolha uma opção no menu administrativo."/>;
+}
+function AdminDashboard({navigate,settings,show}:{navigate:(v:string)=>void;settings:Settings;show:(m:string,e?:boolean)=>void}){
+ const[counts,setCounts]=useState<any>({students:0,active:0,requests:0,consultations:0});const[requests,setRequests]=useState<PlanRequest[]>([]);
+ const load=()=>{get('/admin/summary').then(setCounts).catch(e=>show(e.message,true));get<{items:PlanRequest[]}>('/admin/requests').then(r=>setRequests(r.items.filter(x=>x.status==='PROOF_SENT').slice(0,4))).catch(()=>{})};useEffect(()=>{void load()},[]);
+ return <><PageTitle title="Painel do personal" subtitle="Acompanhe seus alunos, confira pagamentos e personalize sua plataforma." action={<Button variant="outline" onClick={load}><RefreshCw size={16}/> Atualizar</Button>}/>
+ <div className="adminHero"><div><div className="labelGold">GESTÃO INTELIGENTE · PAGAMENTO DIRETO</div><h2>Seu trabalho. Sua marca. <em>Seu controle.</em></h2><p>As solicitações ficam registradas antes do pagamento; somente você autoriza o acesso do aluno.</p><Button onClick={()=>navigate('requests')}>Ver solicitações <ArrowRight size={17}/></Button></div><img src={settings.insideImageUrl} alt="Wagner Noronha dentro do painel"/></div>
+ <div className="statsGrid adminStats"><Stat icon={Users} label="Alunos cadastrados" value={String(counts.students)} caption="total de cadastros"/><Stat icon={ShieldCheck} label="Acessos ativos" value={String(counts.active)} caption="assinaturas vigentes"/><Stat icon={Wallet} label="Solicitações Pix" value={String(counts.requests)} caption="a conferir"/><Stat icon={MessageCircle} label="Consultorias" value={String(counts.consultations)} caption="em andamento"/></div>
+ <div className="twoCol"><section className="panel"><div className="panelHeader"><h3>Comprovantes para análise</h3><button onClick={()=>navigate('requests')}>Ver todos <ArrowRight size={16}/></button></div>{requests.length?requests.map(r=><div className="compactLine" key={r.id}><span className="compactIcon"><Wallet size={17}/></span><div><strong>{r.studentName}</strong><small>{r.planName} · {money(r.price)}</small></div><Status value={r.status}/></div>):<Empty title="Tudo conferido" description="Não há comprovantes aguardando análise no momento." icon={CheckCircle2}/>}</section><section className="panel quickAdmin"><h3>Ações rápidas</h3><div className="quickAdminGrid">{[['Configurar Pix','plans',Wallet],['Montar treino','assignments',Dumbbell],['Atualizar imagens','branding',ImagePlus],['Consultorias','consultations',CalendarDays]].map(([label,id,I]:any)=><button key={id} onClick={()=>navigate(id)}><I size={22}/><strong>{label}</strong><ArrowRight size={16}/></button>)}</div></section></div></>;
 }
 
-function StudentLockedHome({
-  name,
-  onPlans,
-}: {
-  name: string;
-  onPlans: () => void;
-}) {
-  return (
-    <section>
-      <Title
-        h={`Olá, ${name.split(' ')[0]}!`}
-        s="Sua conta AFIT foi criada com sucesso."
-      />
-
-      <div className="lockedWelcome">
-        <div className="lockIcon">🔐</div>
-
-        <h2>Falta pouco para começar</h2>
-
-        <p>
-          Escolha um plano para liberar os recursos disponíveis nesta versão
-          de testes do AFIT.
-        </p>
-
-        <div className="unlockGrid">
-          <div>
-            🏋️
-            <b>Treinos</b>
-          </div>
-
-          <div>
-            💡
-            <b>Dicas</b>
-          </div>
-
-          <div>
-            💬
-            <b>Consultoria avulsa</b>
-          </div>
-        </div>
-
-        <button className="primary" onClick={onPlans}>
-          Escolher meu plano
-        </button>
-      </div>
-    </section>
-  );
+function AdminRequests({show}:{show:(m:string,e?:boolean)=>void}){
+ const[items,setItems]=useState<PlanRequest[]>([]),[loading,setLoading]=useState(true),[filter,setFilter]=useState('ALL'),[student,setStudent]=useState('ALL'),[view,setView]=useState<{url:string;name:string}|null>(null),[busy,setBusy]=useState<number|null>(null);
+ const load=()=>{setLoading(true);get<{items:PlanRequest[]}>('/admin/requests').then(r=>setItems(r.items)).catch(e=>show(e.message,true)).finally(()=>setLoading(false))};useEffect(()=>{void load()},[]);
+ useEffect(()=>()=>{if(view)URL.revokeObjectURL(view.url)},[view]);
+ const names=Array.from(new Map(items.map(r=>[r.studentId,r.studentName])).entries());
+ const filtered=items.filter(r=>(filter==='ALL'||r.status===filter)&&(student==='ALL'||String(r.studentId)===student));
+ const openProof=async(r:PlanRequest)=>{try{const url=await previewPrivate(`/admin/requests/${r.id}/proof`);setView({url,name:r.proofName||'Comprovante'})}catch(e:any){show(e.message,true)}};
+ const decide=async(r:PlanRequest,action:'APPROVE'|'REJECT')=>{const label=action==='APPROVE'?`Confirmou o pagamento de ${money(r.price)} de ${r.studentName} referente ao ${r.planName}?\nA aprovação ativa ${r.durationDays} dias de acesso.`:`Rejeitar o comprovante de ${r.studentName}?`;if(!window.confirm(label))return;const note=action==='REJECT'?prompt('Motivo da rejeição (será mostrado ao aluno):','Comprovante não confirmado.')||'Comprovante não confirmado.':'';setBusy(r.id);try{await post(`/admin/requests/${r.id}/decision`,{action,note});show(action==='APPROVE'?'Pagamento confirmado e plano liberado ao aluno.':'Pedido rejeitado.');load()}catch(e:any){show(e.message,true)}finally{setBusy(null)}};
+ return <><PageTitle title="Solicitações de planos e Pix" subtitle="Veja quem escolheu um plano, confira o comprovante e autorize manualmente o acesso." action={<Button variant="outline" onClick={load}><RefreshCw size={17}/> Atualizar</Button>}/>
+ <div className="sectionRibbon"><ShieldCheck size={20}/><span>O acesso não é liberado pelo envio do comprovante. Confirme o crédito na sua conta bancária antes de aprovar.</span></div>
+ <div className="filterLine"><Input label="Filtrar por status"><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="ALL">Todos os pedidos</option><option value="AWAITING_PROOF">Aguardando comprovante</option><option value="PROOF_SENT">Comprovante enviado</option><option value="APPROVED">Aprovados</option><option value="REJECTED">Rejeitados</option><option value="CANCELLED">Cancelados</option></select></Input><Input label="Selecionar aluno"><select value={student} onChange={e=>setStudent(e.target.value)}><option value="ALL">Todos os alunos</option>{names.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></Input></div>
+ {loading?<Empty title="Consultando pedidos" description="Buscando os registros no banco D1."/>:filtered.length?<div className="requestsList">{filtered.map(r=><article className="panel requestCard" key={r.id}><div className="requestHead"><div className="avatar">{r.studentName.slice(0,1).toUpperCase()}</div><div className="requestIdentity"><h3>{r.studentName}</h3><p>{r.studentEmail} {r.studentPhone?`· ${r.studentPhone}`:''}</p></div><Status value={r.status}/></div><div className="requestData"><div><span>Plano selecionado</span><strong>{r.planName}</strong></div><div><span>Valor</span><strong>{money(r.price)}</strong></div><div><span>Duração</span><strong>{r.durationDays} dias</strong></div><div><span>Solicitação</span><strong>{formatDateTime(r.requestedAt)}</strong></div></div>
+ <div className="receiptLine"><FileText size={17}/><span>{r.proofName?`Comprovante: ${r.proofName}`:Number(r.price)===0?'Plano gratuito: dispensa comprovante Pix.':'Aluno ainda não enviou comprovante.'}</span>{r.proofName&&<Button variant="outline" onClick={()=>openProof(r)}><Eye size={16}/> Visualizar</Button>}</div>
+ {r.status==='APPROVED'&&<div className="approvedLine"><BadgeCheck size={18}/> Acesso liberado até {formatDate(r.activatedUntil)}</div>}
+ {r.status==='REJECTED'&&r.decisionNote&&<div className="rejectedLine">Motivo: {r.decisionNote}</div>}
+ {(r.status==='AWAITING_PROOF'||r.status==='PROOF_SENT')&&<div className="requestActions"><Button disabled={busy===r.id||Number(r.price)>0&&r.status!=='PROOF_SENT'} onClick={()=>decide(r,'APPROVE')}><CheckCircle2 size={17}/> Aprovar pagamento e liberar plano</Button><Button variant="danger" disabled={busy===r.id} onClick={()=>decide(r,'REJECT')}><X size={17}/> Rejeitar</Button></div>}
+ </article>)}</div>:<Empty title="Nenhum pedido encontrado" description="Altere os filtros ou aguarde um aluno escolher e confirmar um plano." icon={Wallet}/>}
+ {view&&<div className="modalOverlay" onMouseDown={()=>setView(null)}><section className="modalPanel proofModal" onMouseDown={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setView(null)}><X size={19}/></button><h2>Comprovante do aluno</h2><p>{view.name}</p>{view.name.toLowerCase().endsWith('.pdf')?<iframe title="Comprovante PDF" src={view.url}/>:<img src={view.url} alt="Comprovante de pagamento Pix enviado pelo aluno"/>}<a href={view.url} download={view.name} className="btn btn-outline"><ArrowDownToLine size={17}/> Baixar para conferência</a></section></div>}
+ </>;
 }
 
-function LockedFeature({
-  page,
-  onPlans,
-}: {
-  page: string;
-  onPlans: () => void;
-}) {
-  const names: Record<string, string> = {
-    workouts: 'Treinos personalizados',
-    mydiet: 'Dieta personalizada',
-    mytips: 'Dicas exclusivas',
-    chat: 'Consultoria online',
-  };
-
-  const descriptions: Record<string, string> = {
-    workouts:
-      'Seus exercícios, séries, repetições e vídeos explicativos serão liberados após a ativação do plano.',
-    mytips:
-      'As dicas exclusivas do personal estarão disponíveis após a ativação do plano.',
-    chat:
-      'O canal de consultoria com o personal será liberado após a confirmação do pagamento.',
-  };
-
-  return (
-    <section className="lockedPage">
-      <div className="lockedBox">
-        <div className="lockIcon">🔒</div>
-
-        <h1>{names[page] || 'Conteúdo exclusivo'}</h1>
-
-        <p>
-          {descriptions[page] ||
-            'Este recurso estará disponível após a ativação do plano.'}
-        </p>
-
-        <div className="lockedInfo">
-          <b>Aguardando ativação do plano</b>
-
-          <p>
-            Assim que o Asaas confirmar o pagamento, o AFIT libera
-            automaticamente esta área.
-          </p>
-        </div>
-
-        <button className="primary" onClick={onPlans}>
-          Ver planos e pagamento
-        </button>
-      </div>
-    </section>
-  );
+function AdminPlans({show}:{show:(m:string,e?:boolean)=>void}){
+ const[items,setItems]=useState<Plan[]>([]),[editing,setEditing]=useState<Plan|null>(null),[busy,setBusy]=useState(false),[adding,setAdding]=useState(false);
+ const blank:Plan={id:0,name:'',price:0,period:'mês',durationDays:30,description:'',active:1,pixKey:'',pixType:'Aleatória',recipientName:'',instructions:'Copie a chave Pix, faça o pagamento e envie o comprovante.'};
+ const load=()=>get<{items:Plan[]}>('/admin/plans').then(r=>setItems(r.items)).catch(e=>show(e.message,true));useEffect(()=>{void load()},[]);
+ const save=async(e:React.FormEvent)=>{e.preventDefault();if(!editing)return;setBusy(true);try{if(editing.id)await put('/admin/plans/'+editing.id,editing);else await post('/admin/plans',editing);show('Plano e configuração Pix salvos!');setEditing(null);setAdding(false);load()}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ return <><PageTitle title="Planos e chaves Pix" subtitle="Cadastre uma chave Pix individual em cada plano. O aluno só verá a chave depois de confirmar a escolha." action={<Button onClick={()=>{setEditing({...blank});setAdding(true)}}><Plus size={17}/> Novo plano</Button>}/>
+ <div className="sectionRibbon"><Wallet size={19}/> Ao alterar uma chave Pix, as novas solicitações utilizarão a chave atualizada. Pedidos antigos preservam a chave exibida no momento da escolha.</div>
+ <div className="planAdminGrid">{items.map(p=><article className="panel adminPlanCard" key={p.id}><div className="planAdminHeader"><h3>{p.name}</h3><Status value={p.active?'APPROVED':'CANCELLED'}/></div><div className="planAdminPrice">{money(p.price)} <small>/{p.period}</small></div><p>{p.description}</p><div className="planConfigInfo"><div><span>Validade</span><b>{p.durationDays} dias</b></div><div><span>Beneficiário</span><b>{p.recipientName||'Não informado'}</b></div><div><span>Chave Pix</span><b className="clipText">{Number(p.price)===0?'Plano gratuito':p.pixKey||'Configure antes de vender'}</b></div></div><Button variant="outline" onClick={()=>{setEditing({...p});setAdding(false)}}><SettingsIcon size={16}/> Editar plano e Pix</Button></article>)}</div>
+ {editing&&<div className="modalOverlay" onMouseDown={()=>setEditing(null)}><section className="modalPanel planEditor" onMouseDown={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setEditing(null)}><X size={19}/></button><div className="labelGold">GESTÃO COMERCIAL</div><h2>{adding?'Criar novo plano':'Editar plano e chave Pix'}</h2><form onSubmit={save} className="adminForm"><div className="formGrid"><Input label="Nome do plano"><input required value={editing.name} onChange={e=>setEditing({...editing,name:e.target.value})}/></Input><Input label="Valor (R$)"><input type="number" step="0.01" min="0" required value={editing.price} onChange={e=>setEditing({...editing,price:Number(e.target.value)})}/></Input><Input label="Duração em dias"><input type="number" min="1" max="3660" required value={editing.durationDays} onChange={e=>setEditing({...editing,durationDays:Number(e.target.value)})}/></Input><Input label="Período exibido"><input value={editing.period} onChange={e=>setEditing({...editing,period:e.target.value})} placeholder="mês, trimestre, etc."/></Input></div><Input label="Descrição"><textarea rows={3} value={editing.description||''} onChange={e=>setEditing({...editing,description:e.target.value})}/></Input>
+ <div className="formSection">CONFIGURAÇÃO PIX</div><div className="formGrid"><Input label="Chave Pix do personal"><input value={editing.pixKey||''} onChange={e=>setEditing({...editing,pixKey:e.target.value})} placeholder="CPF, e-mail, telefone ou aleatória"/></Input><Input label="Tipo de chave"><select value={editing.pixType||'Aleatória'} onChange={e=>setEditing({...editing,pixType:e.target.value})}><option>Aleatória</option><option>CPF</option><option>E-mail</option><option>Telefone</option><option>CNPJ</option><option>Isento</option></select></Input></div><Input label="Nome do favorecido"><input value={editing.recipientName||''} onChange={e=>setEditing({...editing,recipientName:e.target.value})} placeholder="Wagner Noronha"/></Input><Input label="Instruções"><textarea value={editing.instructions||''} onChange={e=>setEditing({...editing,instructions:e.target.value})} rows={2}/></Input><label className="toggleLabel"><input type="checkbox" checked={!!editing.active} onChange={e=>setEditing({...editing,active:e.target.checked?1:0})}/> Disponível para contratação</label><Button type="submit" disabled={busy}>{busy?'Salvando...':'Salvar plano e Pix'} <Save size={17}/></Button></form></section></div>}
+ </>;
 }
 
-function Plans({ refresh }: { refresh: () => void }) {
-  const [plans, setPlans] = useState<any[]>(plansFallback);
-  const [msg, setMsg] = useState('');
-  const [busyId, setBusyId] = useState<number | null>(null);
-
-  useEffect(() => {
-    api.plans().then((x) => setPlans(x.plans)).catch(() => {});
-  }, []);
-
-  const choosePlan = async (plan: any) => {
-    try {
-      setBusyId(Number(plan.id));
-      setMsg('');
-
-      const r = await api.checkout(Number(plan.id));
-
-      if (r.trial) {
-        setMsg(
-          'Plano Teste ativado com sucesso. Você tem acesso gratuito por 20 dias.',
-        );
-        await Promise.resolve(refresh());
-        return;
-      }
-
-      if (!r.invoiceUrl) {
-        throw new Error('O Asaas não retornou o link de pagamento.');
-      }
-
-      window.open(r.invoiceUrl, '_blank');
-      setMsg(
-        'Fatura criada. Após o pagamento, volte aqui e clique em verificar pagamento.',
-      );
-    } catch (e: any) {
-      setMsg(e.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const check = async () => {
-    try {
-      const r = await api.paymentStatus();
-      setMsg(
-        r.status === 'ACTIVE'
-          ? 'Seu acesso está ativo.'
-          : 'Pagamento ainda não foi confirmado.',
-      );
-
-      if (r.status === 'ACTIVE') refresh();
-    } catch (e: any) {
-      setMsg(e.message);
-    }
-  };
-
-  return (
-    <section>
-      <Title
-        h="Escolha seu plano"
-        s="Use o Plano Teste por 20 dias sem cobrança ou escolha um plano pago."
-      />
-
-      <div className="plans">
-        {plans.map((p) => {
-          const isTrial =
-            Number(p.price) === 0 ||
-            String(p.name).trim().toLowerCase() === 'plano teste';
-
-          return (
-            <article
-              className={`plan ${isTrial ? 'trialPlan' : ''}`}
-              key={p.id}
-            >
-              {isTrial && <span className="trialBadge">TESTE GRÁTIS</span>}
-
-              <span>{p.name}</span>
-
-              <h2>
-                {isTrial
-                  ? 'GRÁTIS'
-                  : `R$ ${Number(p.price).toFixed(2).replace('.', ',')}`}
-              </h2>
-
-              <small>/{p.period}</small>
-              <p>{p.description}</p>
-
-              <ul>
-                <li>Treinos de musculação e funcional</li>
-                <li>Vídeos explicativos dos exercícios</li>
-                <li>Dicas AFIT</li>
-                <li>Consultoria online disponível como serviço avulso</li>
-                {isTrial && <li>Acesso completo por 20 dias</li>}
-              </ul>
-
-              <button
-                className="primary"
-                disabled={busyId === Number(p.id)}
-                onClick={() => choosePlan(p)}
-              >
-                {busyId === Number(p.id)
-                  ? 'Processando...'
-                  : isTrial
-                    ? 'Testar grátis por 20 dias'
-                    : 'Assinar plano'}
-              </button>
-            </article>
-          );
-        })}
-      </div>
-
-      {msg && (
-        <div className="notice">
-          {msg}
-          <button onClick={check}>Verificar acesso</button>
-        </div>
-      )}
-    </section>
-  );
+function AdminStudents({show}:{show:(m:string,e?:boolean)=>void}){
+ const[items,setItems]=useState<any[]>([]),[search,setSearch]=useState('');const load=()=>get<{items:any[]}>('/admin/students').then(r=>setItems(r.items)).catch(e=>show(e.message,true));useEffect(()=>{void load()},[]);
+ const filtered=items.filter(x=>`${x.name} ${x.email}`.toLowerCase().includes(search.toLowerCase()));
+ return <><PageTitle title="Alunos cadastrados" subtitle="Consulte os dados e veja qual plano está ativo e sua validade." action={<Button variant="outline" onClick={load}><RefreshCw size={16}/> Atualizar</Button>}/><div className="searchBox listSearch"><Search size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por nome ou e-mail"/></div>
+ {filtered.length?<div className="panel studentList">{filtered.map(x=><div className="studentRow" key={x.id}><div className="avatar">{x.name.slice(0,1)}</div><div className="studentIdentity"><b>{x.name}</b><small>{x.email}{x.phone?` · ${x.phone}`:''}</small></div><div className="studentAccess"><span>{x.planName||'Sem plano liberado'}</span><small>{x.subscriptionStatus==='ACTIVE'?'Ativo até '+formatDate(x.subscriptionUntil):'Acesso inativo'}</small></div><Button variant="danger" onClick={async()=>{if(!confirm(`ATENÇÃO: excluir permanentemente ${x.name} e seus registros?`))return;try{await del('/admin/students/'+x.id);show('Aluno removido.');load()}catch(e:any){show(e.message,true)}}}><Trash2 size={15}/></Button></div>)}</div>:<Empty title="Nenhum aluno encontrado" description="Os cadastros feitos pela tela inicial aparecerão aqui." icon={Users}/>}
+ </>;
 }
-function Student({ page, user, refresh }: { page: string; user: User; refresh:()=>void }) {
-  const [data, setData] = useState<any>({
-    exercises: [],
-    tips: [],
-    diet: [], assignments: [], completions: [],
-  });
-
-  useEffect(() => {
-    api
-      .content()
-      .then(setData)
-      .catch(() => {});
-  }, []);
-
-  if (page === 'home') {
-    return (
-      <>
-        <Title h="Seu progresso" s="Foco + disciplina = resultado" />
-
-        <div className="statgrid">
-          <Card n="52%" t="Meta concluída" />
-          <Card n={data.exercises.length} t="Exercícios disponíveis" />
-          <Card n={data.tips.length} t="Dicas novas" />
-        </div>
-
-        <ExerciseLibrary items={data.exercises} />
-      </>
-    );
-  }
-
-  if (page === 'personalized') {
-    const today = new Date().getDay();
-    const names=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
-    const todayItems=(data.assignments||[]).filter((x:any)=>Number(x.weekday)===today);
-    return <><Title h={`Treino de hoje · ${names[today]}`} s="Treino semanal definido pelo seu personal" />{todayItems.length ? <ExerciseLibrary items={todayItems} personalized /> : <div className="empty">Nenhum treino foi atribuído para hoje.</div>}</>;
-  }
-  if (page === 'profile') {
-    return <><Title h="Meu perfil" s="Personalize sua conta AFIT"/><div className="profileCard">{user.profileImageUrl ? <img className="profilePhoto" src={user.profileImageUrl}/> : <div className="profilePlaceholder">{user.name.charAt(0)}</div>}<div><h2>{user.name}</h2><p>{user.email}</p><label className="uploadPhoto">Alterar foto<input type="file" accept="image/*" onChange={async e=>{const f=e.target.files?.[0]; if(f){await api.profilePhoto(f); refresh();}}}/></label></div></div></>;
-  }
-
-  if (page === 'workouts') {
-    return (
-      <>
-        <Title
-          h="Treinos personalizados"
-          s="Clique no exercício para assistir à explicação"
-        />
-        <ExerciseLibrary items={data.exercises} />
-      </>
-    );
-  }
-
-  if (page === 'mydiet') {
-    return (
-      <>
-        <Title
-          h="Minha dieta"
-          s="Plano alimentar cadastrado para seu objetivo"
-        />
-
-        <div className="stack">
-          {data.diet.map((x: any) => (
-            <Card
-              key={x.id}
-              n={x.time}
-              t={x.title}
-              text={x.description}
-            />
-          ))}
-        </div>
-      </>
-    );
-  }
-
-  if (page === 'mytips') {
-    return (
-      <>
-        <Title h="Dicas AFIT" s="Conteúdo para acelerar seus resultados" />
-
-        <div className="cards">
-          {data.tips.map((x: any) => (
-            <Card
-              key={x.id}
-              n={x.category || 'Dica'}
-              t={x.title}
-              text={x.description}
-            />
-          ))}
-        </div>
-      </>
-    );
-  }
-
-  if (page === 'chat') return <StudentConsultation user={user} />;
-
-  return null;
+function AdminAssignments({show}:{show:(m:string,e?:boolean)=>void}){
+ const[students,setStudents]=useState<any[]>([]),[exercises,setExercises]=useState<any[]>([]),[studentId,setStudentId]=useState(0),[day,setDay]=useState(new Date().getDay()),[selected,setSelected]=useState<number[]>([]),[busy,setBusy]=useState(false);
+ useEffect(()=>{get<{items:any[]}>('/admin/students').then(r=>setStudents(r.items)).catch(()=>{});get<{items:any[]}>('/admin/exercises').then(r=>setExercises(r.items)).catch(()=>{})},[]);
+ useEffect(()=>{if(!studentId){setSelected([]);return;}get<{items:any[]}>(`/admin/assignments?studentId=${studentId}`).then(r=>setSelected(r.items.filter(x=>x.weekday===day).map(x=>x.exerciseId))).catch(e=>show(e.message,true))},[studentId,day]);
+ return <><PageTitle title="Treinos personalizados" subtitle="Selecione um aluno e organize os exercícios de cada dia da semana."/><div className="panel assignmentControls"><div className="formGrid"><Input label="Selecionar aluno"><select value={studentId} onChange={e=>setStudentId(Number(e.target.value))}><option value={0}>Selecione um aluno...</option>{students.map(s=><option key={s.id} value={s.id}>{s.name} · {s.email}</option>)}</select></Input><Input label="Dia da semana"><select value={day} onChange={e=>setDay(Number(e.target.value))}>{days.map((d,i)=><option value={i} key={d}>{d}</option>)}</select></Input></div><div className="formSection">EXERCÍCIOS DISPONÍVEIS</div><div className="assignmentExercises">{exercises.map(ex=><label key={ex.id} className={selected.includes(ex.id)?'checked':''}><input type="checkbox" checked={selected.includes(ex.id)} onChange={()=>setSelected(v=>v.includes(ex.id)?v.filter(n=>n!==ex.id):[...v,ex.id])}/><div className="miniDumbbell"><Dumbbell size={18}/></div><span><strong>{ex.name}</strong><small>{ex.muscleGroup||ex.trainingCategory}</small></span><Check size={19}/></label>)}</div><Button disabled={!studentId||busy} onClick={async()=>{setBusy(true);try{await post('/admin/assignments',{studentId,weekday:day,exerciseIds:selected});show('Treino de '+days[day]+' salvo para o aluno selecionado.')}catch(e:any){show(e.message,true)}finally{setBusy(false)}}}><Save size={18}/> Salvar treino de {days[day]}</Button></div></>;
 }
 
-function consultationStatus(status?:string){
-  return ({REQUESTED:'Solicitação enviada',AVAILABILITY_SENT:'Horários disponíveis',AWAITING_PAYMENT:'Aguardando pagamento',CONFIRMED:'Confirmada',COMPLETED:'Concluída',CANCELLED:'Cancelada'} as any)[status||'']||status||'';
-}
-function dateTimeBR(value?:string){ if(!value)return '-'; const d=new Date(value); return Number.isNaN(d.getTime())?value:d.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}); }
-
-function StudentConsultation({user}:{user:User}){
-  const [data,setData]=useState<any>({request:null,slots:[]}); const [msg,setMsg]=useState(''); const [busy,setBusy]=useState(false); const [selected,setSelected]=useState<any>(null);
-  const load=()=>api.consultation().then(setData).catch((e:any)=>setMsg(e.message));
-  useEffect(()=>{void load(); const t=setInterval(()=>void load(),15000); return()=>clearInterval(t);},[]);
-  const requestOne=async()=>{try{setBusy(true);setMsg('');await api.requestConsultation();setMsg('Solicitação enviada ao personal.');await load();}catch(e:any){setMsg(e.message)}finally{setBusy(false)}};
-  const pay=async()=>{if(!selected)return; try{setBusy(true);const r=await api.selectConsultationSlot(Number(selected.id));await load();if(r.invoiceUrl)window.open(r.invoiceUrl,'_blank');setSelected(null);}catch(e:any){setMsg(e.message)}finally{setBusy(false)}};
-  const r=data.request;
-  return <section><Title h="Consultoria Online" s="Atendimento individual com seu personal, com agendamento e pagamento pela plataforma"/>
-    {!r ? <div className="consultHero"><div className="consultIcon">💻</div><div><span className="miniTag">SERVIÇO AVULSO</span><h2>Consultoria individual</h2><p>Converse com seu personal para avaliação, orientação e acompanhamento personalizado.</p><div className="consultMeta"><span>⏱ Aproximadamente 60 min</span><span>💰 <b>R$ 300,00</b></span></div></div><button className="primary" disabled={busy} onClick={requestOne}>{busy?'Enviando...':'Solicitar consultoria'}</button></div>:
-    <div className="consultStack"><div className={`consultStatus status-${String(r.status).toLowerCase()}`}><small>Status da consultoria</small><b>{consultationStatus(r.status)}</b><span>Solicitada em {dateTimeBR(r.requestedAt)}</span></div>
-      {r.status==='REQUESTED'&&<div className="consultPanel"><h3>Solicitação recebida ✅</h3><p>Seu personal recebeu o pedido. Assim que os horários forem informados, eles aparecerão aqui.</p></div>}
-      {r.status==='AVAILABILITY_SENT'&&<div className="consultPanel"><h3>Escolha um horário</h3><p>Selecione uma das opções disponibilizadas pelo personal.</p><div className="slotGrid">{data.slots.filter((x:any)=>x.status==='AVAILABLE').map((x:any)=><button key={x.id} className="slotButton" onClick={()=>setSelected(x)}><b>{new Date(x.startsAt).toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'})}</b><span>{new Date(x.startsAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span><em>Agendar</em></button>)}</div></div>}
-      {r.status==='AWAITING_PAYMENT'&&<div className="consultPanel"><h3>Horário reservado</h3><div className="bookingSummary"><span>👤 {user.name}</span><span>📅 {dateTimeBR(r.selectedStartsAt)}</span><span>💻 Consultoria Online</span><strong>R$ 300,00</strong></div><div className="paymentPending">🟠 Aguardando confirmação do pagamento pelo Asaas.</div>{r.invoiceUrl&&<button className="primary" onClick={()=>window.open(r.invoiceUrl,'_blank')}>Pagar consultoria</button>}<button className="ghostCheck" onClick={load}>Verificar pagamento</button></div>}
-      {r.status==='CONFIRMED'&&<div className="consultPanel successPanel"><div className="successMark">✓</div><h2>Consultoria agendada com sucesso!</h2><p>Seu pagamento foi confirmado e o horário está reservado.</p><div className="bookingSummary"><span>👤 {user.name}</span><span>📅 {dateTimeBR(r.selectedStartsAt)}</span><span>💳 Pagamento confirmado · R$ 300,00</span></div>{r.meetingUrl?<button className="primary" onClick={()=>window.open(r.meetingUrl,'_blank')}>Entrar na consultoria</button>:<small>O link da reunião será disponibilizado pelo personal nesta página.</small>}</div>}
-      {r.status==='COMPLETED'&&<div className="consultPanel successPanel"><h3>Consultoria concluída</h3><p>Este atendimento foi marcado como realizado pelo seu personal.</p></div>}
-    </div>}
-    {msg&&<div className="notice">{msg}</div>}
-    {selected&&<div className="consultModal" onClick={()=>setSelected(null)}><article onClick={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setSelected(null)}>×</button><span className="miniTag">CONFIRMAR AGENDAMENTO</span><h2>Consultoria Online</h2><div className="bookingSummary"><span>👤 <b>{user.name}</b></span><span>📅 <b>{dateTimeBR(selected.startsAt)}</b></span><span>💻 Atendimento online</span></div><div className="consultPrice"><small>Valor da consultoria</small><strong>R$ 300,00</strong></div><p className="muted">O horário será confirmado automaticamente após a identificação do pagamento.</p><button className="primary" disabled={busy} onClick={pay}>{busy?'Gerando cobrança...':'Confirmar e pagar'}</button></article></div>}
-  </section>;
+function AdminContent({kind,show}:{kind:string;show:(m:string,e?:boolean)=>void}){
+ const isExercise=kind==='exercises',isTip=kind==='tips',title=isExercise?'Biblioteca de exercícios':isTip?'Dicas e conteúdos':'Dietas dos alunos';
+ const initial=()=>isExercise?{name:'',trainingCategory:'Musculação',muscleGroup:'',level:'Iniciante',executionMode:'Repetições',description:'',objective:'',instructions:'',benefits:'',commonErrors:'',equipment:'',sets:3,reps:'12',duration:'',rest:'60s',tags:'',videoUrl:'',imageUrl:'',active:true}:isTip?{title:'',description:'',category:'Motivação',videoUrl:'',imageUrl:'',active:true}:{studentEmail:'',time:'',title:'',description:'',sortOrder:0};
+ const[items,setItems]=useState<any[]>([]),[form,setForm]=useState<any>(initial()),[editing,setEditing]=useState<number|null>(null),[busy,setBusy]=useState(false),[showForm,setShowForm]=useState(false),[filesBusy,setFilesBusy]=useState<string|null>(null);
+ const load=()=>get<{items:any[]}>(`/admin/${kind}`).then(r=>setItems(r.items)).catch(e=>show(e.message,true));useEffect(()=>{load();setForm(initial());setEditing(null);setShowForm(false)},[kind]);
+ const field=(id:string,label:string,props:any={})=><Input label={label}><input {...props} value={form[id]??''} onChange={e=>setForm((f:any)=>({...f,[id]:e.target.value}))}/></Input>;
+ const area=(id:string,label:string)=><Input label={label}><textarea rows={3} value={form[id]||''} onChange={e=>setForm((f:any)=>({...f,[id]:e.target.value}))}/></Input>;
+ const filePicker=(id:'videoUrl'|'imageUrl',label:string)=><Input label={label}><div className="fileInputLine"><input value={form[id]||''} onChange={e=>setForm((f:any)=>({...f,[id]:e.target.value}))} placeholder="URL ou envie um arquivo"/><label className="fileUpload"><Upload size={16}/>{filesBusy===id?'Enviando...':'Enviar'}<input type="file" accept={id==='videoUrl'?'video/mp4,video/webm,video/quicktime':'image/jpeg,image/png,image/webp'} onChange={async e=>{const file=e.target.files?.[0];if(!file)return;setFilesBusy(id);try{const r=await upload<{url:string}>('/admin/upload',file);setForm((f:any)=>({...f,[id]:r.url}));show('Arquivo recebido. Salve o cadastro para vincular.')}catch(e:any){show(e.message,true)}finally{setFilesBusy(null)}}}/></label></div></Input>;
+ const submit=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);try{if(editing)await put(`/admin/${kind}/${editing}`,form);else await post(`/admin/${kind}`,form);show('Informações salvas com sucesso.');setForm(initial());setEditing(null);setShowForm(false);load()}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ const start=()=>{setForm(initial());setEditing(null);setShowForm(v=>!v)};
+ return <><PageTitle title={title} subtitle={isExercise?'Cadastre exercícios com séries, repetições, vídeos e orientações.':isTip?'Publique orientações e conteúdo para seus alunos.':'Cadastre refeições e orientações vinculadas ao e-mail de cada aluno.'} action={<Button onClick={start}><Plus size={17}/> Novo cadastro</Button>}/>
+ {showForm&&<section className="panel contentEditor"><div className="panelHeader"><h3>{editing?'Editar registro':'Novo registro'}</h3><button onClick={()=>setShowForm(false)}><X size={18}/></button></div><form className="adminForm" onSubmit={submit}>
+ {isExercise?<><div className="formGrid">{field('name','Nome do exercício',{required:true})}<Input label="Modalidade"><select value={form.trainingCategory} onChange={e=>setForm({...form,trainingCategory:e.target.value})}>{['Musculação','Funcional','Cardio','Mobilidade','Alongamento','Treino em Casa','Corrida','Preparação Física','Outro'].map(x=><option key={x}>{x}</option>)}</select></Input>{field('muscleGroup','Grupo muscular')}<Input label="Nível"><select value={form.level} onChange={e=>setForm({...form,level:e.target.value})}>{['Iniciante','Intermediário','Avançado'].map(x=><option key={x}>{x}</option>)}</select></Input><Input label="Forma de execução"><select value={form.executionMode} onChange={e=>setForm({...form,executionMode:e.target.value})}>{['Repetições','Tempo','Distância'].map(x=><option key={x}>{x}</option>)}</select></Input>{field('sets','Séries',{type:'number',min:0})}{field('reps','Repetições / distância')}{field('duration','Duração')}{field('rest','Descanso')}{field('equipment','Equipamento')}</div>{area('description','Descrição')}{area('objective','Objetivo')}{area('instructions','Como executar')}{area('benefits','Benefícios')}{area('commonErrors','Erros comuns')}{field('tags','Tags')}{filePicker('imageUrl','Capa do exercício')}{filePicker('videoUrl','Vídeo demonstrativo')}</>:
+ isTip?<>{field('title','Título da dica',{required:true})}{field('category','Categoria')}{area('description','Conteúdo')}{filePicker('imageUrl','Imagem da dica')}{filePicker('videoUrl','Vídeo da dica')}</>:<>{field('studentEmail','E-mail do aluno',{type:'email',required:true})}<div className="formGrid">{field('time','Horário',{type:'time'})}{field('title','Refeição ou atividade',{required:true})}</div>{area('description','Descrição / orientações')}</>}
+ <div className="formActionRow"><Button type="submit" disabled={busy}>{busy?'Salvando...':'Salvar informações'} <Save size={17}/></Button><Button variant="ghost" onClick={()=>setShowForm(false)}>Cancelar</Button></div></form></section>}
+ <div className="panel listRows">{items.length?items.map(x=><div key={x.id} className="contentRow"><div className="contentThumb">{x.imageUrl?<img src={x.imageUrl} alt={x.title||x.name}/>:isExercise?<Dumbbell size={20}/>:isTip?<Activity size={20}/>:<Utensils size={20}/>}</div><div className="contentIdentity"><strong>{x.name||x.title}</strong><small>{isExercise?`${x.trainingCategory} · ${x.sets||0} séries · ${x.reps||x.duration||''}`:isTip?x.category:`${x.studentName||x.studentEmail} · ${x.time||''}`}</small></div><div className="contentActions"><Button variant="outline" onClick={()=>{setEditing(x.id);setForm(isExercise?{...x,active:!!x.active}:isTip?{...x,active:!!x.active}:{...x,studentEmail:x.studentEmail});setShowForm(true);window.scrollTo({top:0,behavior:'smooth'})}}>Editar</Button><Button variant="danger" onClick={async()=>{if(!confirm('Remover este registro?'))return;try{await del(`/admin/${kind}/${x.id}`);show('Registro removido.');load()}catch(e:any){show(e.message,true)}}}><Trash2 size={16}/></Button></div></div>):<Empty title="Ainda não há conteúdo" description="Use o botão Novo cadastro para começar."/>}</div>
+ </>;
 }
 
-function ConsultationsAdmin(){
- const [items,setItems]=useState<any[]>([]); const [msg,setMsg]=useState(''); const [editing,setEditing]=useState<any>(null); const [slots,setSlots]=useState<string[]>(['']); const [meeting,setMeeting]=useState('');
- const load=()=>api.consultationAdminList().then(r=>setItems(r.items||[])).catch((e:any)=>setMsg(e.message)); useEffect(()=>{void load();},[]);
- const send=async()=>{try{const clean=slots.filter(Boolean);await api.consultationAdminSlots(editing.id,clean);setMsg('Horários enviados ao aluno.');setEditing(null);setSlots(['']);await load();}catch(e:any){setMsg(e.message)}};
- const update=async(id:number,action:string,extra:any={})=>{try{await api.consultationAdminUpdate({id,action,...extra});setMsg('Consultoria atualizada.');await load();}catch(e:any){setMsg(e.message)}};
- return <section><Title h="Consultorias" s="Gerencie solicitações, horários, pagamentos e links das reuniões"/>{msg&&<div className="notice">{msg}</div>}<div className="consultAdminList">{items.length===0&&<div className="empty">Nenhuma solicitação de consultoria.</div>}{items.map(x=><article className="consultAdminCard" key={x.id}><div className="consultAdminHead"><div><span className="miniTag">#{x.id} · {consultationStatus(x.status)}</span><h3>{x.name}</h3><small>{x.email}{x.phone?` · ${x.phone}`:''}</small></div><strong>R$ {Number(x.price||300).toFixed(2).replace('.',',')}</strong></div><div className="consultAdminInfo"><span>Solicitada: {dateTimeBR(x.requestedAt)}</span>{x.selectedStartsAt&&<span>Agendada: <b>{dateTimeBR(x.selectedStartsAt)}</b></span>}<span>Pagamento: <b>{x.paymentStatus||'não gerado'}</b></span></div>{x.slots?.length>0&&<div className="adminSlots">{x.slots.filter((s:any)=>s.status!=='CANCELLED').map((s:any)=><span key={s.id}>{dateTimeBR(s.startsAt)} · {s.status}</span>)}</div>}<div className="consultActions">{['REQUESTED','AVAILABILITY_SENT'].includes(x.status)&&<button onClick={()=>{setEditing(x);setSlots(x.slots?.filter((s:any)=>s.status==='AVAILABLE').map((s:any)=>String(s.startsAt).slice(0,16))||[''])}}>Informar horários</button>}{x.status==='CONFIRMED'&&<><input placeholder="Link Google Meet / Zoom" defaultValue={x.meetingUrl||''} onChange={e=>setMeeting(e.target.value)}/><button onClick={()=>update(x.id,'meeting',{meetingUrl:meeting||x.meetingUrl||''})}>Salvar link</button><button className="okAction" onClick={()=>update(x.id,'complete')}>Concluir</button></>} {!['COMPLETED','CANCELLED'].includes(x.status)&&<button className="danger" onClick={()=>confirm('Cancelar esta consultoria?')&&update(x.id,'cancel')}>Cancelar</button>}</div></article>)}</div>
- {editing&&<div className="consultModal" onClick={()=>setEditing(null)}><article onClick={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setEditing(null)}>×</button><span className="miniTag">DISPONIBILIDADE</span><h2>{editing.name}</h2><p>Informe uma ou mais datas e horários para o aluno escolher.</p><div className="slotEditor">{slots.map((v,i)=><div key={i}><input type="datetime-local" value={v} onChange={e=>setSlots(a=>a.map((x,j)=>j===i?e.target.value:x))}/>{slots.length>1&&<button onClick={()=>setSlots(a=>a.filter((_,j)=>j!==i))}>×</button>}</div>)}</div><button className="ghostCheck" onClick={()=>setSlots(a=>[...a,''])}>+ Adicionar horário</button><button className="primary" onClick={send}>Enviar horários ao aluno</button></article></div>}
- </section>;
+function AdminConsultations({show}:{show:(m:string,e?:boolean)=>void}){
+ const[items,setItems]=useState<any[]>([]),[slots,setSlots]=useState<Record<number,string>>({}),[busy,setBusy]=useState<number|null>(null),[view,setView]=useState<{url:string;name:string}|null>(null);
+ const load=()=>get<{items:any[]}>('/admin/consultations').then(r=>setItems(r.items)).catch(e=>show(e.message,true));useEffect(()=>{void load()},[]);useEffect(()=>()=>{if(view)URL.revokeObjectURL(view.url)},[view]);
+ const act=async(id:number,action:string,extra:any={})=>{setBusy(id);try{await post(`/admin/consultations/${id}/decision`,{action,...extra});show('Consultoria atualizada.');load()}catch(e:any){show(e.message,true)}finally{setBusy(null)}};
+ return <><PageTitle title="Consultorias online" subtitle="Defina horários, confira os comprovantes Pix e disponibilize o link de atendimento." action={<Button variant="outline" onClick={load}><RefreshCw size={17}/> Atualizar</Button>}/>
+ {items.length?<div className="consultAdminGrid">{items.map(x=><article className="panel consultAdminCard" key={x.id}><div className="panelHeader"><div><h3>{x.studentName}</h3><small>{x.studentEmail}{x.phone?` · ${x.phone}`:''}</small></div><Status value={x.status}/></div><div className="requestData"><div><span>Valor</span><strong>{money(x.price)}</strong></div><div><span>Solicitada</span><strong>{formatDateTime(x.requestedAt)}</strong></div><div><span>Agendada</span><strong>{formatDateTime(x.selectedStartsAt)}</strong></div></div>
+ {['REQUESTED','AVAILABILITY_SENT'].includes(x.status)&&<div className="slotAdminForm"><h4>Disponibilizar data e horário</h4><Input label="Data/hora"><input type="datetime-local" value={slots[x.id]||''} onChange={e=>setSlots({...slots,[x.id]:e.target.value})}/></Input><Button variant="outline" disabled={!slots[x.id]||busy===x.id} onClick={async()=>{setBusy(x.id);try{await post('/admin/consultations/slots',{requestId:x.id,slots:[slots[x.id]]});show('Horário disponibilizado ao aluno.');load()}catch(e:any){show(e.message,true)}finally{setBusy(null)}}}>Enviar horário <CalendarDays size={15}/></Button>{(x.slots||[]).filter((s:any)=>s.status==='AVAILABLE').map((s:any)=><small key={s.id}>{formatDateTime(s.startsAt)}</small>)}</div>}
+ {x.status==='AWAITING_PAYMENT'&&<div className="receiptLine"><FileText size={18}/><span>{x.proofName?'Comprovante recebido: '+x.proofName:'Aguardando comprovante Pix do aluno.'}</span>{x.proofName&&<Button variant="outline" onClick={async()=>{try{setView({url:await previewPrivate(`/admin/consultations/${x.id}/proof`),name:x.proofName})}catch(e:any){show(e.message,true)}}}><Eye size={16}/> Ver comprovante</Button>}</div>}
+ {x.status==='AWAITING_PAYMENT'&&<Button disabled={!x.proofName||busy===x.id} onClick={()=>{if(confirm('O valor foi recebido na conta Pix do Wagner?'))act(x.id,'APPROVE')}}><BadgeCheck size={17}/> Confirmar pagamento</Button>}
+ {x.status==='CONFIRMED'&&<div className="meetingAdmin"><Input label="Link da reunião (Meet/Zoom)"><input type="url" placeholder="https://meet.google.com/..." id={'meeting-'+x.id} defaultValue={x.meetingUrl||''}/></Input><Button variant="outline" onClick={()=>act(x.id,'MEETING',{meetingUrl:(document.getElementById('meeting-'+x.id) as HTMLInputElement).value})}><Save size={16}/> Salvar link</Button><Button onClick={()=>{if(confirm('Marcar atendimento como concluído?'))act(x.id,'COMPLETE')}}><Check size={16}/> Concluir</Button></div>}
+ {!['COMPLETED','CANCELLED'].includes(x.status)&&<button className="textDanger" onClick={()=>{if(confirm('Cancelar esta consultoria?'))act(x.id,'CANCEL')}}>Cancelar consultoria</button>}
+ </article>)}</div>:<Empty title="Nenhuma consultoria" description="As solicitações enviadas pelos alunos aparecerão aqui." icon={MessageCircle}/>}
+ {view&&<div className="modalOverlay" onMouseDown={()=>setView(null)}><section className="modalPanel proofModal" onMouseDown={e=>e.stopPropagation()}><button className="modalClose" onClick={()=>setView(null)}><X size={18}/></button><h2>Comprovante da consultoria</h2>{view.name.toLowerCase().endsWith('.pdf')?<iframe title="Comprovante" src={view.url}/>:<img src={view.url} alt="Comprovante Pix"/>}</section></div>}
+ </>;
 }
 
-function ExerciseLibrary({ items, personalized=false }: { items: any[]; personalized?: boolean }) {
-  const [selected, setSelected] = useState<any>(null);
-  const [category, setCategory] = useState('Todos');
-  const [search, setSearch] = useState('');
-  const [series, setSeries] = useState(0); const [restLeft,setRestLeft]=useState(0); const [running,setRunning]=useState(false); const [resting,setResting]=useState(false); const [done,setDone]=useState<Set<number>>(new Set());
-
-  const categories = [
-    'Todos',
-    ...Array.from(
-      new Set(items.map((x) => x.trainingCategory || 'Musculação')),
-    ),
-  ];
-
-  const filtered = items.filter(
-    (x) =>
-      (category === 'Todos' ||
-        (x.trainingCategory || 'Musculação') === category) &&
-      String(x.name).toLowerCase().includes(search.toLowerCase()),
-  );
-
-  useEffect(()=>{ if(restLeft<=0)return; const t=setInterval(()=>setRestLeft(v=>Math.max(0,v-1)),1000); return()=>clearInterval(t);},[restLeft]);
-  const restSeconds=(v:any)=>{const m=String(v||'60').match(/(\d+)/); return m?Number(m[1]):60};
-  const start=(x:any)=>{setSelected(x);setSeries(1);setRestLeft(0);setResting(false);setRunning(true)};
-  const finishSeries=()=>{if(!selected)return; setResting(true); setRestLeft(restSeconds(selected.rest));};
-  const nextSeries=()=>{if(restLeft>0)return; const total=Number(selected?.sets||1); setResting(false); setRestLeft(0); if(series<total)setSeries(v=>v+1);};
-  const complete=async()=>{if(!selected||restLeft>0)return; await api.completeWorkout(Number(selected.exerciseId||selected.id)); setDone(new Set([...done,Number(selected.exerciseId||selected.id)])); setResting(false); setRestLeft(0); setRunning(false)};
-
-  return (
-    <>
-      <div className="exerciseToolbar">
-        <input
-          placeholder="Buscar exercício..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-
-        <div className="chips">
-          {categories.map((c) => (
-            <button
-              key={String(c)}
-              className={category === c ? 'active' : ''}
-              onClick={() => setCategory(String(c))}
-            >
-              {String(c)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="exerciseList">
-        {filtered.map((x) => (
-          <button key={x.id} onClick={() => setSelected(x)}>
-            <div className="thumb">
-              {x.imageUrl ? (
-                <img src={x.imageUrl} alt={x.name} />
-              ) : (
-                <span>▶</span>
-              )}
-            </div>
-
-            <div>
-              <span className="categoryTag">
-                {x.trainingCategory || 'Musculação'}
-              </span>
-
-              <b>{x.name}</b>
-
-              <small>
-                {x.sets} séries ·{' '}
-                {x.executionMode === 'Tempo'
-                  ? x.duration || 'tempo definido'
-                  : `${x.reps || '-'} repetições`}
-              </small>
-            </div>
-
-            <span>›</span>
-          </button>
-        ))}
-      </div>
-
-      {selected && (
-        <div className="modal" onClick={() => setSelected(null)}>
-          <article onClick={(e) => e.stopPropagation()}>
-            <button className="close" onClick={() => setSelected(null)}>
-              ×
-            </button>
-
-            {selected.videoUrl ? (
-              <video
-                controls
-                poster={selected.imageUrl || ''}
-                src={selected.videoUrl}
-              />
-            ) : (
-              <div className="videoPlaceholder">
-                Vídeo do personal será exibido aqui
-              </div>
-            )}
-
-            <div className="metrics">
-              <b>
-                {selected.sets || '-'}
-                <small>séries</small>
-              </b>
-
-              <b>
-                {selected.executionMode === 'Tempo'
-                  ? selected.duration || '-'
-                  : selected.reps || '-'}
-                <small>
-                  {selected.executionMode === 'Tempo'
-                    ? 'duração'
-                    : 'repetições'}
-                </small>
-              </b>
-
-              <b>
-                {selected.rest || '-'}
-                <small>descanso</small>
-              </b>
-            </div>
-
-            <div className="detailHead">
-              <span className="categoryTag">
-                {selected.trainingCategory}
-              </span>
-
-              <span className="levelTag">{selected.level}</span>
-            </div>
-
-            <h2>{selected.name}</h2>
-            <Detail title="Descrição" text={selected.description} />
-            <Detail title="Objetivo" text={selected.objective} />
-            <Detail title="Como executar" text={selected.instructions} />
-            <Detail title="Benefícios" text={selected.benefits} />
-            <Detail title="Erros comuns" text={selected.commonErrors} />
-            <Detail
-              title="Equipamentos"
-              text={selected.equipment || 'Peso corporal'}
-            />
-
-            {selected.tags && <Detail title="Tags" text={selected.tags} />}
-            <div className="workoutRunner">
-              {done.has(Number(selected.exerciseId||selected.id)) ? <button className="completedButton">✓ Treino concluído</button> : !running ? <button className="primary" onClick={()=>start(selected)}>Iniciar treino</button> : <><b>Série {series} de {selected.sets||1}</b>{resting ? <><div className="restTimer">Descanso <strong>{restLeft}s</strong></div>{series < Number(selected.sets||1) ? <button className={`primary ${restLeft===0?'readyPulse':''}`} disabled={restLeft>0} onClick={nextSeries}>{restLeft>0?'Aguarde o descanso':`Começar série ${series+1}`}</button> : <button className={`primary ${restLeft===0?'readyPulse':''}`} disabled={restLeft>0} onClick={complete}>{restLeft>0?'Aguarde o descanso':'Concluir treino'}</button>}</> : <button className="primary" onClick={finishSeries}>Finalizar série {series}</button>}</>}
-            </div>
-          </article>
-        </div>
-      )}
-    </>
-  );
+function AdminBranding({settings,onSettings,show}:{settings:Settings;onSettings:()=>void;show:(m:string,e?:boolean)=>void}){
+ const[form,setForm]=useState<Settings>({...settings}),[busy,setBusy]=useState(false),[uploading,setUploading]=useState('');useEffect(()=>setForm(settings),[settings]);
+ const brandUpload=async(slot:string,file?:File)=>{if(!file)return;setUploading(slot);try{await upload(`/admin/branding/${slot}`,file);await Promise.resolve(onSettings());show('Imagem atualizada! A alteração já será exibida aos alunos.')}catch(e:any){show(e.message,true)}finally{setUploading('')}};
+ const save=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);try{await put('/admin/settings',form);onSettings();show('Personalização e chave Pix da consultoria atualizadas.')}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ return <><PageTitle title="Personalização visual" subtitle="A qualquer momento, altere a logo, a foto de entrada e a foto exibida dentro do aplicativo."/>
+ <div className="sectionRibbon"><ImagePlus size={20}/> O aplicativo foi preparado para posicionar a marca em áreas próprias, sem cobrir o rosto e o corpo do Wagner.</div>
+ <div className="brandGrid">{[{slot:'logo',title:'Logo do personal',url:settings.logoUrl,desc:'Exibida no cabeçalho, na tela de login e no menu.'},{slot:'hero',title:'Foto da tela inicial',url:settings.heroImageUrl,desc:'Imagem principal ao lado do texto de boas-vindas.'},{slot:'inside',title:'Foto dentro do aplicativo',url:settings.insideImageUrl,desc:'Usada no painel, no menu e nos destaques.'}].map(x=><article className="panel brandCard" key={x.slot}><div className={'brandPreview '+x.slot}><img src={x.url} alt={x.title}/></div><h3>{x.title}</h3><p>{x.desc}</p><label className="fileUpload brandUpload"><ImagePlus size={17}/>{uploading===x.slot?'Enviando...':'Substituir imagem'}<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>brandUpload(x.slot,e.target.files?.[0])}/></label></article>)}</div>
+ <form className="panel settingsEditor" onSubmit={save}><div className="panelHeader"><h3>Informações da marca</h3><SettingsIcon size={21}/></div><Input label="Nome da marca"><input required value={form.brandName} onChange={e=>setForm({...form,brandName:e.target.value})}/></Input><Input label="Frase principal"><input required value={form.heroTitle} onChange={e=>setForm({...form,heroTitle:e.target.value})}/></Input><Input label="Texto de apresentação"><textarea required rows={3} value={form.heroSubtitle} onChange={e=>setForm({...form,heroSubtitle:e.target.value})}/></Input><div className="formSection">PIX DE CONSULTORIA AVULSA</div><div className="formGrid"><Input label="Chave Pix da consultoria"><input value={form.consultationPixKey||''} onChange={e=>setForm({...form,consultationPixKey:e.target.value})} placeholder="CPF, e-mail, telefone ou aleatória"/></Input><Input label="Beneficiário"><input value={form.consultationPixRecipient||''} onChange={e=>setForm({...form,consultationPixRecipient:e.target.value})} placeholder="Wagner Noronha"/></Input></div><Button type="submit" disabled={busy}>{busy?'Salvando...':'Salvar personalização'} <Save size={17}/></Button></form>
+ </>;
 }
-
-function Detail({title,text}:{title:string;text?:string}) { const [open,setOpen]=useState(false); if(!text)return null; return <div className="detailAccordion"><button onClick={()=>setOpen(!open)}><span>{title}</span><span>{open?'−':'+'}</span></button>{open&&<p className="preserve">{text}</p>}</div>; }
-
-function Admin({ page }: { page: string }) {
-  if (page === 'admin') {
-    return (
-      <>
-        <Title
-          h="Painel administrativo"
-          s="Gerencie todo o conteúdo da plataforma"
-        />
-
-        <div className="statgrid">
-          <Card n="D1" t="Banco de dados" />
-          <Card n="R2" t="Vídeos e imagens" />
-          <Card n="Asaas" t="Pagamentos e webhooks" />
-        </div>
-      </>
-    );
-  }
-
-  if (page === 'assignments') return <AssignmentAdmin />;
-  if (page === 'consultations') return <ConsultationsAdmin />;
-
-  const map: any = {
-    exercises: {
-      title: 'Exercícios',
-      fields: [
-        'trainingCategory',
-        'name',
-        'muscleGroup',
-        'level',
-        'executionMode',
-        'description',
-        'objective',
-        'instructions',
-        'benefits',
-        'commonErrors',
-        'equipment',
-        'sets',
-        'reps',
-        'duration',
-        'rest',
-        'tags',
-        'videoUrl',
-        'imageUrl',
-      ],
-    },
-    tips: {
-      title: 'Dicas',
-      fields: ['title', 'description', 'category', 'videoUrl', 'imageUrl'],
-    },
-    diets: {
-      title: 'Dietas',
-      fields: ['studentEmail', 'time', 'title', 'description'],
-    },
-    students: {
-      title: 'Alunos',
-      fields: [],
-    },
-  };
-
-  return <AdminCrud kind={page} config={map[page] || map.exercises} />;
+function AdminAccount({user,onUser,show}:{user:User;onUser:()=>Promise<User|null>;show:(m:string,e?:boolean)=>void}){
+ const[name,setName]=useState(user.name),[email,setEmail]=useState(user.email),[password,setPassword]=useState(''),[old,setOld]=useState(''),[next,setNext]=useState(''),[busy,setBusy]=useState(false);
+ const updateAccount=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);try{await put('/admin/account',{name,email,password});setPassword('');show('Nome e e-mail atualizados.');onUser()}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ const updatePassword=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);try{await post('/account/password',{currentPassword:old,newPassword:next});show('Senha de administrador atualizada.');setOld('');setNext('')}catch(e:any){show(e.message,true)}finally{setBusy(false)}};
+ return <><PageTitle title="Minha conta administrativa" subtitle="Gerencie seus dados e substitua a senha inicial por uma senha particular."/><div className="twoCol"><form className="panel adminForm" onSubmit={updateAccount}><h3>Dados do administrador</h3><Input label="Nome"><input value={name} onChange={e=>setName(e.target.value)}/></Input><Input label="E-mail de acesso"><input type="email" value={email} onChange={e=>setEmail(e.target.value)}/></Input><Input label="Confirme sua senha atual"><input required type="password" value={password} onChange={e=>setPassword(e.target.value)}/></Input><Button disabled={busy} type="submit">Atualizar dados <Save size={16}/></Button></form>
+ <form className="panel adminForm" onSubmit={updatePassword}><h3>Trocar minha senha</h3><p className="muted">Por segurança, troque a senha de implantação antes de divulgar o aplicativo.</p><Input label="Senha atual"><input required type="password" value={old} onChange={e=>setOld(e.target.value)}/></Input><Input label="Nova senha (mínimo 8 caracteres)"><input required minLength={8} type="password" value={next} onChange={e=>setNext(e.target.value)}/></Input><Button disabled={busy} type="submit"><KeyRound size={16}/> Alterar minha senha</Button></form></div></>;
 }
-
-function AdminCrud({ kind, config }: { kind: string; config: any }) {
-  const [items, setItems] = useState<any[]>([]);
-  const [form, setForm] = useState<any>({
-    trainingCategory: 'Musculação',
-    level: 'Iniciante',
-    executionMode: 'Repetições',
-  });
-  const [msg, setMsg] = useState('');
-  const [editing,setEditing]=useState<number|null>(null);
-
-  const load = () =>
-    api
-      .adminList(kind)
-      .then((r) => setItems(r.items || []))
-      .catch((e) => setMsg(e.message));
-
-  useEffect(() => {
-    void load();
-  }, [kind]);
-
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    try {
-      if(editing && kind==='exercises') await api.adminUpdate(kind,{...form,id:editing}); else await api.adminSave(kind, form);
-
-      setForm({
-        trainingCategory: 'Musculação',
-        level: 'Iniciante',
-        executionMode: 'Repetições',
-      });
-
-      setEditing(null); setMsg('Salvo com sucesso.');
-      load();
-    } catch (e: any) {
-      setMsg(e.message);
-    }
-  };
-
-  const upload = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-    field: string,
-  ) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-
-    try {
-      setMsg('Enviando arquivo...');
-      const r = await api.upload(f);
-      setForm({ ...form, [field]: r.url });
-      setMsg('Upload concluído.');
-    } catch (e: any) {
-      setMsg(e.message);
-    }
-  };
-
-  return (
-    <>
-      <Title h={config.title} s="Cadastre e publique sem editar código" />
-
-      {config.fields.length > 0 && (
-        <form className="adminForm" onSubmit={save}>
-          {config.fields.map((f: string) => {
-            const v = form[f] || '';
-
-            if (f === 'trainingCategory') {
-              return (
-                <label key={f}>
-                  {label(f)}
-                  <select
-                    value={v}
-                    onChange={(e) =>
-                      setForm({ ...form, [f]: e.target.value })
-                    }
-                  >
-                    <option>Musculação</option>
-                    <option>Funcional</option>
-                    <option>Cardio</option>
-                    <option>Mobilidade</option>
-                    <option>Alongamento</option>
-                    <option>Treino em Casa</option>
-                    <option>Corrida</option>
-                    <option>Preparação Física</option>
-                    <option>Outro</option>
-                  </select>
-                </label>
-              );
-            }
-
-            if (f === 'level') {
-              return (
-                <label key={f}>
-                  {label(f)}
-                  <select
-                    value={v}
-                    onChange={(e) =>
-                      setForm({ ...form, [f]: e.target.value })
-                    }
-                  >
-                    <option>Iniciante</option>
-                    <option>Intermediário</option>
-                    <option>Avançado</option>
-                  </select>
-                </label>
-              );
-            }
-
-            if (f === 'executionMode') {
-              return (
-                <label key={f}>
-                  {label(f)}
-                  <select
-                    value={v}
-                    onChange={(e) =>
-                      setForm({ ...form, [f]: e.target.value })
-                    }
-                  >
-                    <option>Repetições</option>
-                    <option>Tempo</option>
-                    <option>Distância</option>
-                  </select>
-                </label>
-              );
-            }
-
-            if (
-              [
-                'description',
-                'objective',
-                'instructions',
-                'benefits',
-                'commonErrors',
-              ].includes(f)
-            ) {
-              return (
-                <label className="wide" key={f}>
-                  {label(f)}
-                  <textarea
-                    rows={4}
-                    value={v}
-                    onChange={(e) =>
-                      setForm({ ...form, [f]: e.target.value })
-                    }
-                  />
-                </label>
-              );
-            }
-
-            return (
-              <label key={f}>
-                {label(f)}
-
-                {f === 'videoUrl' || f === 'imageUrl' ? (
-                  <>
-                    <input
-                      value={v}
-                      onChange={(e) =>
-                        setForm({ ...form, [f]: e.target.value })
-                      }
-                    />
-
-                    <input
-                      type="file"
-                      accept={f === 'videoUrl' ? 'video/*' : 'image/*'}
-                      onChange={(e) => upload(e, f)}
-                    />
-                  </>
-                ) : (
-                  <input
-                    required={f === 'name'}
-                    value={v}
-                    onChange={(e) =>
-                      setForm({ ...form, [f]: e.target.value })
-                    }
-                  />
-                )}
-              </label>
-            );
-          })}
-
-          <button className="primary">Salvar</button>
-        </form>
-      )}
-
-      {msg && <div className="notice">{msg}</div>}
-
-      <div className="table">
-        {items.map((x: any) => (
-          <div key={x.id} className="adminRow">
-            <div><b>{x.name || x.title || x.email}</b><small>{kind==='students' ? `${x.subscription_status||''} · Plano pago: ${x.paid_plan||'nenhum'} · ${x.phone||''}` : (x.description || x.subscription_status || x.category)}</small>{kind==='students'&&<small>CPF: {x.cpf ? `***.***.${String(x.cpf).replace(/\D/g,'').slice(-5)}` : 'não informado'} · Acesso até: {x.subscription_until ? new Date(x.subscription_until).toLocaleDateString('pt-BR'):'-'}</small>}</div>
-            <div className="rowActions">{kind==='exercises'&&<button onClick={()=>{setForm({...x});setEditing(x.id);window.scrollTo({top:0,behavior:'smooth'})}}>Editar</button>}{['exercises','students'].includes(kind)&&<button className="danger" onClick={async()=>{if(confirm(`Deseja realmente remover ${x.name||x.email}?`)){await api.adminDelete(kind,x.id);load();}}}>Remover</button>}</div>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
-function AssignmentAdmin(){
- const [students,setStudents]=useState<any[]>([]),[exercises,setExercises]=useState<any[]>([]); const [studentId,setStudentId]=useState(0); const [weekday,setWeekday]=useState(new Date().getDay()); const [selected,setSelected]=useState<number[]>([]); const [msg,setMsg]=useState('');
- useEffect(()=>{api.adminList('students').then(r=>setStudents(r.items));api.adminList('exercises').then(r=>setExercises(r.items));},[]);
- useEffect(()=>{if(!studentId)return; api.assignments(studentId).then(r=>setSelected(r.items.filter((x:any)=>Number(x.weekday)===weekday).map((x:any)=>Number(x.exerciseId))))},[studentId,weekday]);
- const days=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
- return <><Title h="Treinos personalizados" s="Monte a rotina semanal de cada aluno"/><div className="assignmentControls"><label>Aluno<select value={studentId} onChange={e=>setStudentId(Number(e.target.value))}><option value={0}>Selecione...</option>{students.map(x=><option value={x.id} key={x.id}>{x.name} · {x.email}</option>)}</select></label><label>Dia da semana<select value={weekday} onChange={e=>setWeekday(Number(e.target.value))}>{days.map((d,i)=><option key={d} value={i}>{d}</option>)}</select></label></div><div className="assignmentList">{exercises.map(x=><label key={x.id}><input type="checkbox" checked={selected.includes(Number(x.id))} onChange={()=>setSelected(v=>v.includes(Number(x.id))?v.filter(i=>i!==Number(x.id)):[...v,Number(x.id)])}/><span><b>{x.name}</b><small>{x.muscleGroup||x.trainingCategory}</small></span></label>)}</div><button className="primary" disabled={!studentId} onClick={async()=>{await api.saveAssignments({studentId,weekday,exerciseIds:selected});setMsg('Treino do dia salvo com sucesso.')}}>Salvar treino de {days[weekday]}</button>{msg&&<div className="notice">{msg}</div>}</>;
-}
-
-const label = (s: string) =>
-  (
-    {
-      trainingCategory: 'Modalidade',
-      name: 'Nome do exercício',
-      muscleGroup: 'Grupo muscular',
-      level: 'Nível',
-      executionMode: 'Forma de execução',
-      description: 'Descrição',
-      objective: 'Objetivo',
-      instructions: 'Como executar',
-      benefits: 'Benefícios',
-      commonErrors: 'Erros comuns',
-      equipment: 'Equipamentos',
-      sets: 'Séries',
-      reps: 'Repetições ou distância',
-      duration: 'Duração',
-      rest: 'Descanso',
-      tags: 'Tags',
-      videoUrl: 'Vídeo do personal',
-      imageUrl: 'Imagem de capa',
-      title: 'Título',
-      category: 'Categoria',
-      studentEmail: 'E-mail do aluno',
-      time: 'Horário',
-    } as any
-  )[s] || s;
-
-const Title = ({ h, s }: { h: string; s: string }) => (
-  <div className="title">
-    <h1>{h}</h1>
-    <p>{s}</p>
-  </div>
-);
-
-function Card({
-  n,
-  t,
-  text,
-}: {
-  n: any;
-  t: string;
-  text?: string;
-}) {
-  return (
-    <article className="card">
-      <strong>{n}</strong>
-      <h3>{t}</h3>
-      {text && <p>{text}</p>}
-    </article>
-  );
-}
-
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(<App/>);

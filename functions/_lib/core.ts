@@ -1,134 +1,21 @@
-
-export type Env = {
-  DB: any;
-  MEDIA: any;
-  JWT_SECRET: string;
-  SETUP_TOKEN: string;
-  ASAAS_ENV?: string;
-  ASAAS_API_KEY?: string;
-  ASAAS_WEBHOOK_TOKEN?: string;
-};
-
-export const json = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
-  });
-
-export const error = (message: string, status = 400) => json({ error: message }, status);
-
-function bytesToBase64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-}
-
-function base64UrlToBytes(value: string): Uint8Array {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
-  const binary = atob(padded);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-}
-
-export async function hashPassword(password: string, salt?: string): Promise<string> {
-  const actualSalt = salt || crypto.randomUUID();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt: new TextEncoder().encode(actualSalt),
-      iterations: 100_000,
-      hash: "SHA-256",
-    },
-    key,
-    256,
-  );
-  return `${actualSalt}.${bytesToBase64Url(new Uint8Array(bits))}`;
-}
-
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [salt] = stored.split(".");
-  return Boolean(salt) && (await hashPassword(password, salt)) === stored;
-}
-
-export async function signToken(payload: Record<string, unknown>, secret: string): Promise<string> {
-  const header = bytesToBase64Url(new TextEncoder().encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
-  const body = bytesToBase64Url(
-    new TextEncoder().encode(JSON.stringify({ ...payload, exp: Date.now() + 7 * 86_400_000 })),
-  );
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${header}.${body}`));
-  return `${header}.${body}.${bytesToBase64Url(new Uint8Array(signature))}`;
-}
-
-export async function readUser(request: Request, env: Env): Promise<any | null> {
-  const raw = request.headers.get("authorization");
-  const token = raw?.startsWith("Bearer ") ? raw.slice(7) : "";
-  if (!token) return null;
-
-  try {
-    const [header, body, signature] = token.split(".");
-    if (!header || !body || !signature) return null;
-
-    const key = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(env.JWT_SECRET),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"],
-    );
-    const valid = await crypto.subtle.verify(
-      "HMAC",
-      key,
-      base64UrlToBytes(signature),
-      new TextEncoder().encode(`${header}.${body}`),
-    );
-    if (!valid) return null;
-
-    const payload = JSON.parse(new TextDecoder().decode(base64UrlToBytes(body)));
-    return payload.exp > Date.now() ? payload : null;
-  } catch {
-    return null;
-  }
-}
-
-function asaasBase(env: Env): string {
-  return env.ASAAS_ENV === "production" ? "https://api.asaas.com/v3" : "https://api-sandbox.asaas.com/v3";
-}
-
-export async function asaasRequest(
-  env: Env,
-  path: string,
-  method = "GET",
-  body?: unknown,
-): Promise<any> {
-  if (!env.ASAAS_API_KEY) throw new Error("A chave ASAAS_API_KEY ainda não foi configurada.");
-  const response = await fetch(`${asaasBase(env)}${path}`, {
-    method,
-    headers: {
-      "content-type": "application/json",
-      access_token: env.ASAAS_API_KEY,
-      "user-agent": "AFIT-Cloudflare-Pages/3.0",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data: any = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.errors?.[0]?.description || "Falha ao comunicar com o Asaas.");
-  }
-  return data;
-}
+export type Env={DB:any;MEDIA:any;JWT_SECRET:string;SETUP_TOKEN?:string};
+export const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
+export const fail=(message:string,status=400)=>json({error:message},status);
+const enc=new TextEncoder();
+function b64url(bytes:Uint8Array){let raw='';for(const n of bytes)raw+=String.fromCharCode(n);return btoa(raw).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');}
+function unb64(input:string){const s=atob(input.replace(/-/g,'+').replace(/_/g,'/')+'==='.slice((input.length+3)%4));return Uint8Array.from(s,c=>c.charCodeAt(0));}
+export async function hashPassword(password:string,salt?:string){const actual=salt||crypto.randomUUID();const key=await crypto.subtle.importKey('raw',enc.encode(password),'PBKDF2',false,['deriveBits']);const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:enc.encode(actual),iterations:100000,hash:'SHA-256'},key,256);return `${actual}.${b64url(new Uint8Array(bits))}`;}
+export async function verifyPassword(password:string,hash:string){const s=hash?.split('.')[0];return !!s&&(await hashPassword(password,s))===hash;}
+export async function signToken(data:{id:number;role:'admin'|'student'},secret:string){const a=b64url(enc.encode(JSON.stringify({alg:'HS256',typ:'JWT'})));const b=b64url(enc.encode(JSON.stringify({...data,exp:Date.now()+7*86400000})));const key=await crypto.subtle.importKey('raw',enc.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);const signature=await crypto.subtle.sign('HMAC',key,enc.encode(`${a}.${b}`));return `${a}.${b}.${b64url(new Uint8Array(signature))}`;}
+export async function readUser(request:Request,env:Env){try{const token=request.headers.get('authorization')?.replace(/^Bearer /i,'')||'';const [a,b,s]=token.split('.');if(!a||!b||!s)return null;const key=await crypto.subtle.importKey('raw',enc.encode(env.JWT_SECRET),{name:'HMAC',hash:'SHA-256'},false,['verify']);if(!await crypto.subtle.verify('HMAC',key,unb64(s),enc.encode(`${a}.${b}`)))return null;const payload=JSON.parse(new TextDecoder().decode(unb64(b)));if(payload.exp<Date.now())return null;const u=await env.DB.prepare('SELECT id,name,email,role,subscription_status,subscription_until,cpf,phone FROM users WHERE id=?').bind(payload.id).first();return u||null;}catch{return null;}}
+export const today=()=>new Date().toISOString();
+export const asText=(v:unknown,max=2000)=>String(v??'').trim().slice(0,max);
+export function normalizeDate(v:string){const time=Date.parse(v);return Number.isFinite(time)?new Date(time).toISOString():null;}
+export async function ensureActive(env:Env,user:any){if(user.role==='student'&&user.subscription_status==='ACTIVE'&&user.subscription_until&&Date.parse(user.subscription_until)<Date.now()){await env.DB.prepare("UPDATE users SET subscription_status='INACTIVE' WHERE id=?").bind(user.id).run();return false;}return user.subscription_status==='ACTIVE';}
+export function err(e:any){console.error('AFIT API',e);return fail('Não foi possível concluir esta operação. Verifique os dados e tente novamente.',500);}
+export const cleanName=(s:string)=>s.replace(/[^\w.\-]/g,'_').slice(0,90);
+export async function storeFile(env:Env,file:File,prefix:string,types:string[],limit=8*1024*1024){if(!types.includes(file.type))throw new Error('Formato de arquivo não permitido.');if(file.size===0||file.size>limit)throw new Error(`Tamanho máximo permitido: ${Math.round(limit/1048576)} MB.`);const key=`${prefix}/${crypto.randomUUID()}-${cleanName(file.name)}`;await env.MEDIA.put(key,await file.arrayBuffer(),{httpMetadata:{contentType:file.type},customMetadata:{uploadedAt:today()}});return {key,mime:file.type,name:file.name.slice(0,140)};}
+export const imageTypes=['image/jpeg','image/png','image/webp'];
+export const proofTypes=[...imageTypes,'application/pdf'];
+export async function isAdmin(request:Request,env:Env){const u=await readUser(request,env);return u?.role==='admin'?u:null;}
+export async function writeAudit(env:Env,uid:number,action:string,id:number,detail=''){await env.DB.prepare('INSERT INTO admin_audit(admin_id,action,entity_id,detail) VALUES(?,?,?,?)').bind(uid,action,id,detail).run();}
