@@ -25,3 +25,270 @@
 @media(max-width:700px){.pageTitle{align-items:start;flex-direction:column}.pageTitle h1{font-size:26px}.statsGrid,.statsGrid.adminStats,.pricingGrid,.exerciseGrid,.gridCards,.twoCol,.planAdminGrid,.brandGrid,.consultAdminGrid,.requestsList{grid-template-columns:1fr}.formGrid{grid-template-columns:1fr}.panel{padding:18px}.memberHero,.adminHero,.welcomeLocked,.consultHero{min-height:300px}.memberHeroCopy,.adminHero>div,.welcomeLocked>div,.consultCopy{max-width:72%;padding:22px}.memberHero h2,.adminHero h2,.welcomeLocked h2,.consultHero h2{font-size:28px}.memberHero>img,.adminHero>img,.welcomeLocked>img,.consultHero>img{right:-8px;width:41%;max-height:87%}.memberHero p,.adminHero p,.welcomeLocked p,.consultHero p{font-size:11px}.memberHeroActions .btn{font-size:10px;min-height:40px;padding:10px}.statsGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.stat{padding:16px}.stat>strong{font-size:25px}.filterLine .field{width:100%}.filterLine .searchBox{width:100%}.categoryPills{width:100%}.requestActions .btn{flex:1}.requestHead{flex-wrap:wrap}.requestHead .status{margin-left:0}.requestIdentity{min-width:calc(100% - 65px)}.studentRow{flex-wrap:wrap}.studentAccess{flex:1;align-items:start;padding-left:55px}.contentRow{flex-wrap:wrap}.contentActions{margin-left:auto}.assignmentExercises{grid-template-columns:1fr}.pixBlock{align-items:start;flex-direction:column}.pixBlock .btn{width:100%}.uploadReceipt{align-items:stretch}.uploadReceipt .btn{flex:1}.historyRow{align-items:start}.historyRow>.status{white-space:normal}.authCopy h1{font-size:36px}.authVisual{min-height:330px}.authPortrait{width:46%;right:0}.authCopy{max-width:69%;margin-left:18px}.authCopy p{max-width:220px}.authProof{margin-top:15px;max-width:220px;font-size:10px}.verticalCaption{bottom:14px;font-size:8px}.authPanel{padding:27px 18px 45px}.authBrand strong{font-size:12px}.authBrand img{width:61px;height:51px}.installLink{padding:9px;font-size:10px}.authBrand{gap:4px}}
 @media(max-width:410px){.authVisual{min-height:300px}.authCopy h1{font-size:29px}.authCopy{max-width:72%}.authProof{max-width:200px}.memberHeroCopy,.adminHero>div,.welcomeLocked>div,.consultCopy{max-width:76%}.memberHero h2,.adminHero h2,.welcomeLocked h2,.consultHero h2{font-size:23px}.memberHeroActions{gap:7px}.memberHeroActions .btn{padding:8px;font-size:9px}.mainContent{padding:19px 14px 105px}.topbar{padding:10px 14px}.topBrand span{font-size:10px}.topBrand img{width:45px}.statsGrid{gap:9px}.stat{padding:13px}.stat>strong{font-size:21px}.statLabel{font-size:10px}.stat small{font-size:9px}.authTabs button{font-size:11px;padding:12px 8px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   WAGNER NORONHA · HERO 4.1 | Novembro de 2026
+   Referência visual aprovada: retrato protagonista, copy à esquerda,
+   autenticação em card independente à direita. Os controles seguem HTML real.
+   Manter este bloco DEPOIS das media queries originais (sobrescreve somente login).
+   ──────────────────────────────────────────────────────────────────────────── */
+.authRoot {
+  overflow-x: clip;
+  background: #09090b;
+}
+.authNav {
+  min-height: 96px;
+  padding: 8px clamp(22px, 3.6vw, 64px);
+  position: relative;
+  z-index: 10;
+  background: linear-gradient(180deg,#101011,#0b0b0c);
+  border-bottom: 1px solid rgba(219,175,91,.20);
+  box-shadow: 0 8px 28px rgba(0,0,0,.3);
+}
+.authBrand { gap: 16px; }
+.authBrand img {
+  width: 104px;
+  height: 78px;
+  object-fit: contain;
+}
+.authBrand strong { font-size: clamp(14px,1.15vw,19px); letter-spacing:.135em; }
+.authBrand small { margin-top:7px; letter-spacing:.33em; font-size:9px; color:#e0c788; }
+.installLink {
+  padding: 12px 19px;
+  border-color: rgba(218,174,84,.48);
+  background: linear-gradient(140deg,rgba(26,22,18,.96),rgba(13,13,14,.95));
+  box-shadow: inset 0 1px rgba(255,229,157,.10),0 7px 21px rgba(0,0,0,.35);
+  transition: transform .2s,border-color .2s,background .2s;
+}
+.installLink:hover { transform:translateY(-2px); border-color:#e4ba64; background:#241c13; }
+.authLayout {
+  display: grid;
+  position: relative;
+  isolation: isolate;
+  align-items: start;
+  grid-template-columns: minmax(0,1fr) minmax(410px,31%);
+  max-width: 1920px;
+  min-height: max(750px,calc(100svh - 96px));
+  margin: 0 auto;
+  padding: 0 clamp(24px,3.8vw,72px) 28px;
+  gap: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 48% 32%,rgba(181,108,38,.18),transparent 42%),
+    radial-gradient(ellipse at 5% 100%,rgba(215,159,53,.10),transparent 39%),
+    #0b0b0c;
+}
+.authVisual {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  pointer-events: none;
+  min-height: 0;
+  border: 0;
+  overflow: hidden;
+  background: transparent;
+}
+.authVisual::before {
+  content: '';
+  position: absolute;
+  inset: -55px;
+  background: url('/brand/wagner-hero.jpg') center 45% / cover no-repeat;
+  filter: blur(45px) saturate(.85) brightness(.32);
+  opacity: .35;
+  transform: scale(1.05);
+}
+.authVisual::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg,#08090af7 0%,#09090aeb 22%,rgba(9,9,10,.72) 31%,rgba(9,9,10,.18) 46%,transparent 65%),
+    linear-gradient(0deg,rgba(6,7,8,.88) 0%,transparent 23%),
+    linear-gradient(90deg,transparent 68%,rgba(8,8,10,.35) 73%,rgba(8,8,10,.75) 95%);
+}
+.authGlow {
+  position: absolute;
+  z-index: 0;
+  width: min(65vw,950px);
+  height: min(65vw,950px);
+  top: 10%;
+  right: 18%;
+  border: 1px solid rgba(214,155,58,.25);
+  border-radius: 50%;
+  box-shadow: 0 0 95px rgba(167,107,24,.10),inset 0 0 100px rgba(238,174,66,.05);
+}
+.authGlow::before { inset: 75px; }
+.authGlow::after { inset: 152px; }
+.authPortrait {
+  position: absolute;
+  inset: -8px 29% 0 auto;
+  z-index: 1;
+  width: 43%;
+  height: calc(100% + 8px);
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  overflow: visible;
+}
+.authPortrait img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: contain;
+  object-position: center bottom;
+  filter: drop-shadow(-22px 18px 32px rgba(0,0,0,.42)) contrast(1.025) saturate(1.06);
+  -webkit-mask-image: linear-gradient(90deg,transparent 0%,#000 8%,#000 91%,transparent 100%);
+  mask-image: linear-gradient(90deg,transparent 0%,#000 8%,#000 91%,transparent 100%);
+}
+.authCopy {
+  position: absolute;
+  top: 48%;
+  left: clamp(25px,3.9vw,74px);
+  transform: translateY(-50%);
+  z-index: 3;
+  width: min(37vw,570px);
+  max-width: 570px;
+  margin: 0;
+  padding: 0;
+}
+.authCopy .labelGold {
+  font-size: clamp(11px,.94vw,15px);
+  letter-spacing: .24em;
+  color: #ffdc83;
+  text-shadow: 0 2px 14px #000;
+}
+.authCopy .labelGold>span { width:42px; height:3px; background:linear-gradient(90deg,#fff2ae,#d39c40); }
+.authCopy h1 {
+  font-family: Impact,"Arial Black",Inter,ui-sans-serif,sans-serif;
+  font-size: clamp(50px,4.45vw,82px);
+  line-height: 1.04;
+  letter-spacing: -.035em;
+  font-weight: 950;
+  max-width: 100%;
+  margin: 35px 0 27px;
+  color: #f8f5ed;
+  white-space: nowrap;
+  text-shadow: 0 4px 26px rgba(0,0,0,.9),0 1px 1px rgba(0,0,0,.72);
+}
+.authCopy h1 em {
+  background: linear-gradient(170deg,#fff2b6,#f3ca69 49%,#be8832 90%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 3px 7px #0009);
+}
+.authCopy p {
+  max-width: 440px;
+  margin: 0;
+  font-size: clamp(15px,1.25vw,20px);
+  line-height: 1.65;
+  font-weight: 450;
+  color: #e4e2df;
+  text-shadow: 0 2px 13px #000;
+}
+.authProof {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  max-width: 100%;
+  margin-top: 34px;
+  padding: 15px 0 14px;
+  border-bottom: 1px solid rgba(242,194,92,.34);
+  font-size: clamp(11px,.9vw,14px);
+  color: #f2d17f;
+  text-shadow: 0 2px 12px #000;
+}
+.authProof svg { flex-shrink:0; width:26px; height:26px; }
+.verticalCaption { display:none; }
+.authPanel {
+  grid-column: 2;
+  position: relative;
+  z-index: 5;
+  margin: clamp(35px,4.4vh,65px) 0 18px;
+  padding: 34px clamp(23px,2.4vw,43px);
+  width: 100%;
+  align-self: start;
+  background:
+    linear-gradient(145deg,rgba(24,24,25,.97),rgba(10,10,11,.98) 70%),
+    #121214;
+  border: 1px solid rgba(212,166,81,.58);
+  border-radius: 22px;
+  box-shadow: 0 30px 85px rgba(0,0,0,.68),inset 0 1px 0 rgba(255,238,184,.08),0 0 30px rgba(171,117,42,.07);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+.authPanelInner { width:100%; max-width:none; }
+.authPanelInner h2 { font-size: clamp(28px,2.6vw,43px); line-height:1.08; margin:23px 0 12px; letter-spacing:-.045em; }
+.authPanelInner>.muted { font-size:14px; line-height:1.65; margin-bottom:27px; color:#c1c0c3; }
+.eyebrow { color:#f0c96f; font-size:11px; }
+.tinyStar { font-size:25px; }
+.authTabs { margin-top:18px; margin-bottom:23px; }
+.authTabs button { padding:14px 10px; }
+.authForm { gap:16px; }
+.authPanel .field input { background:#0d0e10; min-height:49px; border-radius:11px; }
+.authSubmit { min-height:56px; padding:16px 18px; font-size:14px; }
+.authBottom { margin-top:30px; padding-top:22px; line-height:1.6; }
+
+/* Tablet: image and copy lead; login card follows naturally below. */
+@media(max-width:1120px) {
+  .authLayout { display:flex; flex-direction:column; min-height:0; padding:0; overflow:visible; }
+  .authVisual { position:relative; inset:auto; width:100%; height:clamp(475px,62vw,690px); min-height:0; }
+  .authVisual::after { background:linear-gradient(90deg,#09090af4 0%,#09090ad9 23%,#09090a80 43%,transparent 74%),linear-gradient(0deg,#09090a 0%,transparent 23%); }
+  .authPortrait { right:1%; width:58%; top:0; bottom:0; height:100%; }
+  .authCopy { left:clamp(24px,5vw,57px); top:50%; width:56%; max-width:540px; }
+  .authCopy h1 { font-size:clamp(47px,6vw,72px); }
+  .authCopy p { max-width:380px; font-size:16px; }
+  .authPanel { align-self:center; width:min(100% - 44px,620px); margin:0 auto 48px; padding:clamp(25px,4vw,40px); }
+  .authPanelInner h2 { font-size:clamp(29px,4vw,40px); }
+  .authGlow { right:-9%; }
+}
+/* Small screens: portrait owns the upper hero; readable copy sits on a dark fade. */
+@media(max-width:620px) {
+  .authNav { min-height:71px; padding:7px 12px; }
+  .authBrand { gap:8px; min-width:0; }
+  .authBrand img { width:65px; height:56px; }
+  .authBrand strong { font-size:clamp(11px,3vw,15px); letter-spacing:.065em; }
+  .authBrand small { font-size:7px; letter-spacing:.2em; margin-top:4px; }
+  .installLink { font-size:0; gap:0; width:44px; height:43px; display:grid;place-items:center;padding:0;flex-shrink:0; }
+  .installLink svg { width:21px;height:21px; }
+  .authVisual { height: min(675px,calc(100svh - 71px + 180px)); min-height:540px; }
+  .authVisual::before { background-position:center; filter:blur(32px) brightness(.22); }
+  .authVisual::after {
+    background:
+      linear-gradient(0deg,#09090b 0%,rgba(9,9,11,.99) 12%,rgba(9,9,11,.90) 30%,rgba(9,9,11,.08) 69%,rgba(9,9,11,.06) 100%),
+      linear-gradient(90deg,rgba(9,9,11,.30),transparent 42%);
+  }
+  .authPortrait { width:105%; right:-19%; top:-7px; height:77%; bottom:auto; }
+  .authPortrait img {
+    object-fit:contain;
+    object-position:center top;
+    -webkit-mask-image:linear-gradient(0deg,transparent 0%,#000 18%,#000 100%);
+    mask-image:linear-gradient(0deg,transparent 0%,#000 18%,#000 100%);
+  }
+  .authCopy {
+    left:0; right:0; top:auto; bottom:0; transform:none;
+    width:100%; max-width:none;
+    padding:0 clamp(20px,5.3vw,31px) 30px;
+  }
+  .authCopy .labelGold { font-size:10px; letter-spacing:.18em; }
+  .authCopy .labelGold>span { width:26px;height:2px; }
+  .authCopy h1 {
+    margin:15px 0;
+    white-space:nowrap;
+    font-size:clamp(34px,8.55vw,52px);
+    letter-spacing:-.025em;
+    line-height:1.07;
+  }
+  .authCopy p { max-width:410px; font-size:13px; line-height:1.6; }
+  .authProof { margin-top:16px; padding:9px 0; font-size:11px; gap:9px; }
+  .authProof svg { width:22px;height:22px; }
+  .authPanel { width:calc(100% - 24px); margin:-4px auto 22px; padding:24px 20px; border-radius:17px; }
+  .authPanelInner h2 {font-size:clamp(28px,7.5vw,37px);}
+  .authPanelInner>.muted { font-size:13px; }
+  .authBottom { font-size:11px; }
+}
+@media(max-width:350px){.authCopy h1{font-size:31px}.authCopy p{font-size:12px}.authCopy{padding-left:16px;padding-right:16px}}
+@media(prefers-reduced-motion:reduce){.installLink{transition:none}}

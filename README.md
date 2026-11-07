@@ -1,6 +1,16 @@
-# Wagner Noronha Personal Trainer · AFIT 4.0
+# Wagner Noronha Personal Trainer · AFIT 4.1
 
 Aplicativo web responsivo (PWA) com Cloudflare Pages + Pages Functions, D1 e R2. **Sem integração Asaas para pagamentos novos.** Pagamento por **chave Pix própria**, com escolha de plano pelo aluno, comprovante privado e liberação exclusivamente manual pelo administrador.
+
+## Atualização 4.1 — apresentação inicial aprovada (07/11/2026)
+
+Esta atualização modifica a **tela pública de entrada** para seguir a composição visual aprovada: fotografia do Wagner ampliada e destacada ao centro, fundo com iluminação dourada sutil, chamada "TRANSFORME SUA EVOLUÇÃO" organizada à esquerda e formulário de acesso em **card independente à direita**. No celular, a fotografia aparece em destaque na parte superior, com títulos legíveis na base e formulário abaixo, sem esconder o rosto com a logo. O cabeçalho mantém a marca em área própria.
+
+**Arquivos alterados sobre a 4.0:** `src/styles.css` (CSS responsivo do hero), `public/brand/wagner-hero.jpg` (fotografia derivada da referência visual aprovada), `public/sw.js` (renovação do cache PWA), `package.json` (versão) e este `README.md`.
+
+**Esta atualização visual não exige nova migração SQL.** Preserve o mesmo banco Cloudflare D1 e bucket R2. Se a foto da entrada foi substituída anteriormente pelo administrador e está salva como URL em `app_settings.hero_image_url`, a página continuará usando essa imagem personalizada. Para retornar à nova imagem padrão, defina esse campo como `/brand/wagner-hero.jpg` no banco, ou envie novamente a nova foto pelo painel **Personalização**.
+
+Após publicar, acesse a página e atualize-a; em PWA já instalado, feche e reabra para aplicar a nova versão do service worker. Se a foto antiga permanecer visível, confira se houve atualização no deploy e invalide o cache do navegador.
 
 ## O que mudou
 
