@@ -1,3 +1,23 @@
+# AFIT 4.2 — CORREÇÃO DA HOME PREMIUM (WAGNER NORONHA)
+
+**O que foi corrigido**
+
+O ZIP 4.1 continha a foto premium, mas o painel buscava a URL antiga salva em `app_settings.hero_image_url`. Além disso o CSS limitava a imagem a uma faixa vertical com `object-fit: contain`. Por isso a página publicada mostrava a foto pequena, apesar da arte aprovada.
+
+Na versão 4.2:
+- Foto premium incluída como `/brand/wagner-hero-v42.jpg` (nome novo, evita cache antigo).
+- Hero ocupa toda a região principal, Wagner em destaque no centro, textos legíveis à esquerda e formulário interativo à direita.
+- Responsividade própria para computador, tablet e celular. A área de login continua clicável e real, sem screenshot aplicada por cima.
+- O aplicativo usa a imagem premium automaticamente mesmo que a URL da versão antiga ainda esteja salva no banco. **Não precisa de SQL para esta atualização visual.**
+- **Para trocar a foto no futuro:** Painel do administrador → Personalização → Foto da tela inicial → Substituir imagem. Uploads novos usam um prefixo versionado no R2, passando a ter prioridade sobre a imagem padrão.
+- Formulário, planos Pix, comprovantes, acesso manual, exercícios e demais funções preservados.
+
+**Instalação:** extraia o ZIP, publique a pasta `wagner-noronha-afit` como raiz do projeto (ou configure essa pasta como Root Directory). Build command `npm run build`; output `dist`; preserve bindings `DB` (D1) e `MEDIA` (R2). Se usar upload manual do `dist`, primeiro compile o projeto. Não publique o ZIP diretamente se o seu fluxo exigir a pasta `dist`.
+
+**Se a foto antiga ainda aparecer depois do novo deploy:** verifique se o deploy recebeu de fato o arquivo `brand/wagner-hero-v42.jpg` e o bundle de código novo. A página do Cloudflare Pages pode ter URL provisória diferente da produção. Atualize a página completamente e reinicie o PWA.
+
+---
+
 # Wagner Noronha Personal Trainer · AFIT 4.1
 
 Aplicativo web responsivo (PWA) com Cloudflare Pages + Pages Functions, D1 e R2. **Sem integração Asaas para pagamentos novos.** Pagamento por **chave Pix própria**, com escolha de plano pelo aluno, comprovante privado e liberação exclusivamente manual pelo administrador.

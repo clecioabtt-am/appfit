@@ -292,3 +292,119 @@
 }
 @media(max-width:350px){.authCopy h1{font-size:31px}.authCopy p{font-size:12px}.authCopy{padding-left:16px;padding-right:16px}}
 @media(prefers-reduced-motion:reduce){.installLink{transition:none}}
+
+
+/* ═══════════ AFIT 4.2 — CORREÇÃO REAL DO HERO (não é imagem estática) ═══════════
+   A imagem vertical é ampliada e integrada ao fundo; títulos e formulário são HTML.
+   O módulo de login, cadastro, recuperação, Pix e personalização permanece funcional.
+   Regras depois de todas as regras 4.1 para garantir precedência.
+*/
+.authLayout{
+  min-height:max(800px,calc(100svh - 96px));
+  grid-template-columns:minmax(0,1fr) minmax(420px,31.5%);
+  padding:0 clamp(25px,3.8vw,70px) 28px;
+  background:#090a0c;
+}
+.authVisual{
+  inset:0;
+  background:
+    linear-gradient(90deg,#060709 0%,rgba(7,8,10,.96) 19%,rgba(7,8,10,.45) 49%,rgba(7,8,10,.15) 70%,#08090b 98%),
+    linear-gradient(0deg,#07080a 0%,transparent 30%),
+    var(--hero-image, url('/brand/wagner-hero-v42.jpg')) 56% 42%/cover no-repeat;
+}
+.authVisual::before{
+  inset:0;
+  background:
+    radial-gradient(ellipse at 58% 24%,rgba(195,119,44,.20),transparent 35%),
+    radial-gradient(ellipse at 8% 92%,rgba(145,94,36,.18),transparent 47%);
+  filter:none;opacity:1;transform:none;
+}
+.authVisual::after{
+  background:
+    linear-gradient(90deg,rgba(6,7,9,.99) 0%,rgba(6,7,9,.95) 15%,rgba(6,7,9,.70) 30%,rgba(6,7,9,.12) 46%,transparent 64%,rgba(8,8,10,.84) 100%),
+    linear-gradient(0deg,rgba(6,7,9,.86),transparent 15%);
+}
+.authGlow{
+  width:min(70vw,1020px);height:min(70vw,1020px);
+  top:-18%;right:11%;opacity:.76;
+  box-shadow:0 0 90px rgba(212,136,29,.08),inset 0 0 100px rgba(213,169,66,.03);
+}
+.authPortrait{
+  inset:0 29.2% 0 auto;
+  width:clamp(520px,39.5%,735px);
+  height:100%;
+  z-index:1;
+}
+.authPortrait img{
+  width:100%;height:100%;max-width:none;
+  object-fit:cover;
+  object-position:center top;
+  filter:contrast(1.03) saturate(1.06) drop-shadow(-14px 16px 29px rgba(0,0,0,.38));
+  -webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 11%,#000 84%,transparent 100%);
+  mask-image:linear-gradient(90deg,transparent 0%,#000 11%,#000 84%,transparent 100%);
+}
+.authCopy{
+  top:clamp(122px,15svh,170px);
+  transform:none;
+  width:min(34.5vw,570px);
+  max-width:570px;
+  left:clamp(24px,3.8vw,69px);
+  z-index:4;
+}
+.authCopy h1{
+  font-family:Inter,system-ui,-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:clamp(42px,4.05vw,78px);
+  font-weight:950;
+  line-height:1.08;
+  letter-spacing:-.063em;
+  margin:43px 0 27px;
+  white-space:normal;
+  text-shadow:0 3px 19px rgba(0,0,0,.9);
+}
+.authCopy h1 em{font-style:normal;white-space:nowrap;background:linear-gradient(170deg,#ffe9a4 2%,#eac066 45%,#b87f2b 99%);background-clip:text;-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.authCopy p{max-width:475px;font-size:clamp(15px,1.26vw,20px);line-height:1.58;color:#eeeae3;font-weight:480;}
+.authCopy .labelGold{font-size:clamp(11px,.94vw,15px);letter-spacing:.26em;}
+.authProof{margin-top:34px;font-size:clamp(11px,.91vw,15px);font-weight:750;}
+.authPanel{
+  margin:clamp(36px,5svh,66px) 0 18px;
+  background:linear-gradient(155deg,rgba(19,19,21,.97),rgba(9,9,11,.98));
+  border-color:rgba(223,181,100,.55);
+  box-shadow:0 33px 110px rgba(0,0,0,.75),inset 0 1px rgba(255,232,164,.09);
+}
+@media (max-width:1250px) and (min-width:1021px){
+  .authLayout{grid-template-columns:minmax(0,1fr) minmax(385px,35%)}
+  .authPortrait{right:28%;width:clamp(460px,42%,620px)}
+  .authCopy{width:40vw}
+  .authCopy h1{font-size:clamp(38px,4.2vw,57px)}
+}
+@media (max-width:1020px){
+  .authLayout{display:flex;flex-direction:column;padding:0;min-height:0;overflow:visible}
+  .authVisual{position:relative;inset:auto;width:100%;height:clamp(470px,65vw,730px);overflow:hidden}
+  .authVisual::after{background:linear-gradient(90deg,#07080afa 0%,#07080ae5 13%,rgba(7,8,10,.62) 40%,transparent 72%),linear-gradient(0deg,#090a0c,transparent 24%)}
+  .authPortrait{top:-45px;right:0;bottom:auto;left:auto;width:55%;height:calc(100% + 60px)}
+  .authCopy{left:clamp(24px,5vw,55px);top:clamp(90px,15%,125px);width:52%;max-width:530px;transform:none;padding:0;margin:0}
+  .authCopy h1{font-size:clamp(39px,5.1vw,62px);margin:30px 0 22px}
+  .authCopy p{font-size:clamp(13px,1.75vw,16px);max-width:360px}
+  .authPanel{align-self:center;width:min(100% - 44px,620px);margin:0 auto 48px;padding:clamp(25px,4vw,40px)}
+}
+@media (max-width:620px){
+  .authNav{min-height:71px;padding:7px 12px}
+  .authVisual{height:clamp(540px,145vw,680px);min-height:540px}
+  .authVisual::after{background:linear-gradient(0deg,#09090b 0%,rgba(9,9,11,.98) 9%,rgba(9,9,11,.90) 24%,rgba(9,9,11,.12) 56%,rgba(9,9,11,.05) 100%)}
+  .authPortrait{width:112%;right:-6%;height:77%;top:0;bottom:auto}
+  .authPortrait img{object-fit:cover;object-position:center top;-webkit-mask-image:linear-gradient(0deg,transparent 0%,#000 19%,#000 100%);mask-image:linear-gradient(0deg,transparent 0%,#000 19%,#000 100%)}
+  .authCopy{position:absolute;left:0;right:0;top:auto;bottom:0;max-width:none;width:100%;transform:none;padding:0 clamp(19px,5vw,31px) 28px}
+  .authCopy .labelGold{font-size:10px;letter-spacing:.18em}
+  .authCopy h1{font-size:clamp(34px,8.4vw,53px);line-height:1.07;letter-spacing:-.06em;margin:13px 0 15px;white-space:normal}
+  .authCopy p{font-size:13px;max-width:410px;line-height:1.5}
+  .authProof{font-size:11px;margin-top:15px;padding:9px 0;gap:9px}
+  .authPanel{width:calc(100% - 24px);margin:0 auto 22px;padding:24px 20px}
+}
+@media(max-width:355px){
+  .authCopy h1{font-size:32px}
+  .authCopy h1 em{white-space:normal}
+  .authCopy p{font-size:12px}
+}
+@media(prefers-reduced-motion:reduce){.authPanel,.authCopy,.authPortrait{animation:none;transition:none}}
+/* Contrast enhancement for the main gold word (legible on dark gym background). */
+.authCopy h1 em{background-image:linear-gradient(180deg,#fff2b9 0%,#f6cc71 52%,#d69a36 100%);filter:none}
