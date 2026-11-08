@@ -20,6 +20,41 @@ const safeDate=(value:string)=>{const dt=new Date(value);return Number.isFinite(
 const isStudent=(u:any)=>u?.role==='student';
 const checkPlanStatus=async(env:Env,u:any)=>{const active=await ensureActive(env,u);return {active,subscriptionStatus:active?'ACTIVE':'INACTIVE',subscriptionUntil:u.subscription_until};};
 
+// Chat only for a CURRENT, MANUALLY APPROVED, PAID plan (never the free trial).
+const paidStudent=async(env:Env,id:number)=>{
+ const row:any=await env.DB.prepare(`SELECT u.id,u.name,u.email,u.profile_image_url AS profileImageUrl,
+ u.subscription_status AS subscriptionStatus,u.subscription_until AS subscriptionUntil,
+ a.expires_at AS accessUntil,r.price AS paidPrice,r.status AS requestStatus
+ FROM users u JOIN student_plan_access a ON a.student_id=u.id
+ JOIN plan_requests r ON r.id=a.request_id AND r.student_id=u.id AND r.plan_id=a.plan_id
+ WHERE u.id=? AND u.role='student' LIMIT 1`).bind(id).first();
+ const valid=(d:unknown)=>typeof d==='string'&&Number.isFinite(Date.parse(d))&&Date.parse(d)>Date.now();
+ return row && row.subscriptionStatus==='ACTIVE' && row.requestStatus==='APPROVED' && Number(row.paidPrice)>0 && valid(row.subscriptionUntil)&&valid(row.accessUntil)?row:null;
+};
+const presenceState=async(env:Env,role:string,id:number)=>{
+ const now=Date.now();
+ const rows=await env.DB.prepare('SELECT state,last_seen_ms AS seen FROM chat_presence WHERE user_role=? AND user_id=? AND session_expires_ms>?').bind(role,id,now).all();
+ const recent=(rows.results as any[]);
+ if(recent.some(r=>r.state==='ONLINE'&&now-Number(r.seen)<45000))return 'ONLINE';
+ // Enquanto o token de login continua válido, aba fechada/oculta = ausente.
+ if(recent.length)return 'AWAY';
+ return 'OFFLINE';
+};
+const checkChatActor=async(env:Env,user:any,studentId:number)=>{
+ if(user.role!=='admin'&&user.role!=='student')bad('Chat disponível apenas para o personal e seus alunos.',403);
+ if(user.role==='student'&&user.id!==studentId)bad('Conversa não autorizada.',403);
+ const student=await paidStudent(env,studentId);
+ if(!student)bad('O chat está disponível somente para alunos com plano pago aprovado e ativo.',403);
+ return student;
+};
+const chatMessageSelect=`SELECT m.id,m.student_id AS studentId,m.sender_role AS senderRole,m.sender_id AS senderId,
+ m.body,m.created_at AS createdAt,m.read_at AS readAt,
+ CASE WHEN m.sender_role='student' THEN s.name ELSE a.name END AS senderName,
+ CASE WHEN m.sender_role='student' THEN s.profile_image_url ELSE a.profile_image_url END AS senderPhoto
+ FROM chat_messages m JOIN users s ON s.id=m.student_id
+ LEFT JOIN users a ON a.id=m.sender_id AND m.sender_role='admin'`;
+
+
 export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
  const path=pathFrom(params);const method=request.method.toUpperCase();const url=new URL(request.url); const seg=path.split('/').filter(Boolean);
  try{
@@ -49,9 +84,9 @@ export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
    const b=await data(request);const email=asText(b.email,180).toLowerCase(),password=String(b.password||'');
    const doctor=await env.DB.prepare('SELECT id,name,email,password_hash,profile_image_url AS profile_image_url FROM doctor_accounts WHERE email=? AND active=1').bind(email).first();
    if(doctor&&await verifyPassword(password,doctor.password_hash))return json({token:await signToken({id:doctor.id,role:'doctor'},env.JWT_SECRET),user:{id:doctor.id,name:doctor.name,email:doctor.email,role:'doctor',profileImageUrl:doctor.profile_image_url||null,subscriptionStatus:'ACTIVE'}});
-   const u=await env.DB.prepare('SELECT id,name,email,role,password_hash,subscription_status,subscription_until FROM users WHERE email=?').bind(email).first();
+   const u=await env.DB.prepare('SELECT id,name,email,role,password_hash,subscription_status,subscription_until,profile_image_url FROM users WHERE email=?').bind(email).first();
    if(!u||!await verifyPassword(password,u.password_hash))bad('E-mail ou senha incorretos.',401);
-   const a=await checkPlanStatus(env,u);return json({token:await signToken({id:u.id,role:u.role},env.JWT_SECRET),user:{id:u.id,name:u.name,email:u.email,role:u.role,subscriptionStatus:a.subscriptionStatus,subscriptionUntil:a.subscriptionUntil}});
+   const a=await checkPlanStatus(env,u);return json({token:await signToken({id:u.id,role:u.role},env.JWT_SECRET),user:{id:u.id,name:u.name,email:u.email,role:u.role,profileImageUrl:u.profile_image_url||null,subscriptionStatus:a.subscriptionStatus,subscriptionUntil:a.subscriptionUntil}});
   }
   const user=await readUser(request,env);auth(user);
   if(path==='/api/me'&&method==='GET'&&user.role==='doctor')return json({user:{id:user.id,name:user.name,email:user.email,role:'doctor',profileImageUrl:user.profile_image_url||null,subscriptionStatus:'ACTIVE'}});
@@ -64,29 +99,118 @@ export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
    const b=await data(request);const r=await env.DB.prepare(`SELECT password_hash FROM ${user.role==='doctor'?'doctor_accounts':'users'} WHERE id=?`).bind(user.id).first();if(!await verifyPassword(String(b.currentPassword||''),r.password_hash))bad('Senha atual incorreta.',403);if(String(b.newPassword||'').length<8)bad('A nova senha precisa ter pelo menos 8 caracteres.');
    await env.DB.prepare(`UPDATE ${user.role==='doctor'?'doctor_accounts':'users'} SET password_hash=? WHERE id=?`).bind(await hashPassword(String(b.newPassword)),user.id).run();return json({ok:true});
   }
-  // Foto de perfil do medico: rota independente do painel administrativo.
-  // A foto fica em pasta publica do R2; planos clinicos e comprovantes continuam privados.
-  if(path==='/api/account/photo'&&method==='POST'){
-   auth(user,'doctor');
-   const form=await request.formData();
-   const file=form.get('file');
-   if(!(file instanceof File))bad('Selecione uma imagem para o perfil médico.');
+  // Foto própria de qualquer perfil. Diretórios públicos apenas para avatares,
+  // nunca para comprovantes ou documentos médicos.
+  if(path==='/api/account/photo'&&method==='POST' || path==='/api/student/profile-photo'&&method==='POST'){
+   if(path==='/api/student/profile-photo')auth(user,'student');
+   const form=await request.formData(),file=form.get('file');
+   if(!(file instanceof File))bad('Selecione uma foto JPG, PNG ou WEBP.');
    let saved;
+   try{saved=await storeFile(env,file,`public/avatars/${user.role}/${user.id}`,imageTypes,4*1024*1024);}
+   catch(e:any){bad(e?.message||'Não foi possível enviar sua foto.');}
+   const url=`/media/${encodeURIComponent(saved.key)}`;
    try{
-    saved=await storeFile(env,file,`public/doctor-avatars/${user.id}`,imageTypes,4*1024*1024);
-   }catch(e:any){bad(e?.message||'Não foi possível enviar a imagem.');}
-   const photo=`/media/${encodeURIComponent(saved.key)}`;
-   try{
-    await env.DB.prepare('UPDATE doctor_accounts SET profile_image_url=? WHERE id=? AND active=1').bind(photo,user.id).run();
-   }catch(e){
-    await env.MEDIA.delete(saved.key).catch(()=>{});
-    throw e;
-   }
-   return json({ok:true,url:photo});
+    if(user.role==='doctor')await env.DB.prepare('UPDATE doctor_accounts SET profile_image_url=? WHERE id=? AND active=1').bind(url,user.id).run();
+    else await env.DB.prepare('UPDATE users SET profile_image_url=? WHERE id=? AND role=?').bind(url,user.id,user.role).run();
+   }catch(e){await env.MEDIA.delete(saved.key).catch(()=>{});throw e;}
+   return json({ok:true,url});
   }
-  if(path==='/api/student/profile-photo'&&method==='POST'){
-   auth(user,'student');const fd=await request.formData();const file=fd.get('file');if(!(file instanceof File))bad('Selecione sua foto.');let f;try{f=await storeFile(env,file,`profiles/${user.id}`,imageTypes);}catch(e:any){bad(e.message);}
-   const photo=`/media/${encodeURIComponent(f.key)}`;await env.DB.prepare('UPDATE users SET profile_image_url=? WHERE id=?').bind(photo,user.id).run();return json({url:photo});
+  // Presença por sessão do navegador. Visível e focado=verde; aba em segundo plano=laranja;
+  // logout ou ausência prolongada=vermelho. A presença expira automaticamente.
+  if(path==='/api/presence/heartbeat'&&method==='POST'){
+   const b=await data(request);const session=String(b.sessionId||'');
+   if(!/^[a-zA-Z0-9-]{16,80}$/.test(session))bad('Identificador da sessão inválido.');
+   const state=b.state==='AWAY'?'AWAY':'ONLINE';
+   const tokenPart=(request.headers.get('authorization')||'').replace(/^Bearer /i,'').split('.')[1]||'';
+   let expiresAt=Date.now()+7*86400000;
+   try{const encoded=tokenPart.replace(/-/g,'+').replace(/_/g,'/');expiresAt=Number(JSON.parse(atob(encoded+'==='.slice((encoded.length+3)%4))).exp)||expiresAt;}catch{}
+   await env.DB.prepare(`INSERT INTO chat_presence(user_role,user_id,session_id,state,last_seen_ms,session_expires_ms)
+      VALUES(?,?,?,?,?,?) ON CONFLICT(user_role,user_id,session_id) DO UPDATE
+      SET state=excluded.state,last_seen_ms=excluded.last_seen_ms,session_expires_ms=excluded.session_expires_ms`)
+      .bind(user.role,user.id,session,state,Date.now(),expiresAt).run();
+   return json({ok:true});
+  }
+  if(path==='/api/presence/logout'&&method==='POST'){
+   const b=await data(request);const session=String(b.sessionId||'');
+   if(!/^[a-zA-Z0-9-]{16,80}$/.test(session))bad('Identificador da sessão inválido.');
+   await env.DB.prepare('DELETE FROM chat_presence WHERE user_role=? AND user_id=? AND session_id=?').bind(user.role,user.id,session).run();
+   return json({ok:true});
+  }
+  if(path==='/api/chat/conversations'&&method==='GET'){
+   if(user.role!=='student'&&user.role!=='admin')bad('Acesso não permitido.',403);
+   if(user.role==='student'){
+    const member=await checkChatActor(env,user,user.id);
+    const trainer:any=await env.DB.prepare("SELECT id,name,profile_image_url AS profileImageUrl FROM users WHERE role='admin' ORDER BY id LIMIT 1").first();
+    const last=await env.DB.prepare('SELECT id,body,created_at AS createdAt FROM chat_messages WHERE student_id=? ORDER BY id DESC LIMIT 1').bind(user.id).first();
+    const unread:any=await env.DB.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE student_id=? AND sender_role='admin' AND read_at IS NULL").bind(user.id).first();
+    return json({items:[{studentId:user.id,name:trainer?.name||'Wagner Noronha',photoUrl:trainer?.profileImageUrl||null,role:'admin',presence:await presenceState(env,'admin',trainer?.id||0),lastMessage:last?.body||'',lastAt:last?.createdAt||null,unread:Number(unread?.n||0)}],member:{name:member.name,photoUrl:member.profileImageUrl}});
+   }
+   const students=await env.DB.prepare(`SELECT u.id,u.name,u.email,u.profile_image_url AS profileImageUrl,
+      u.subscription_status AS subscriptionStatus,u.subscription_until AS subscriptionUntil,
+      a.expires_at AS accessUntil,r.price AS paidPrice,r.status AS requestStatus
+      FROM users u JOIN student_plan_access a ON a.student_id=u.id
+      JOIN plan_requests r ON r.id=a.request_id AND r.student_id=u.id AND r.plan_id=a.plan_id
+      WHERE u.role='student' AND r.status='APPROVED' AND r.price>0 ORDER BY u.name`).all();
+   const items=[];
+   for(const st of students.results as any[]){
+    if(st.subscriptionStatus!=='ACTIVE'||!Number.isFinite(Date.parse(st.subscriptionUntil))||Date.parse(st.subscriptionUntil)<=Date.now()||!Number.isFinite(Date.parse(st.accessUntil))||Date.parse(st.accessUntil)<=Date.now())continue;
+    const last:any=await env.DB.prepare('SELECT body,created_at AS createdAt FROM chat_messages WHERE student_id=? ORDER BY id DESC LIMIT 1').bind(st.id).first();
+    const unread:any=await env.DB.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE student_id=? AND sender_role='student' AND read_at IS NULL").bind(st.id).first();
+    items.push({studentId:st.id,name:st.name,email:st.email,photoUrl:st.profileImageUrl||null,role:'student',presence:await presenceState(env,'student',st.id),lastMessage:last?.body||'',lastAt:last?.createdAt||null,unread:Number(unread?.n||0)});
+   }
+   items.sort((a,b)=>Number(b.unread>0)-Number(a.unread>0) || (Date.parse(b.lastAt||'')||0)-(Date.parse(a.lastAt||'')||0)||a.name.localeCompare(b.name));
+   return json({items});
+  }
+  if(path==='/api/chat/messages'&&method==='GET'){
+   const studentId=user.role==='student'?user.id:sid(url.searchParams.get('studentId')||'');
+   await checkChatActor(env,user,studentId);
+   const after=Math.max(0,Math.floor(Number(url.searchParams.get('after')||0))||0);
+   const before=Math.max(0,Math.floor(Number(url.searchParams.get('before')||0))||0);
+   let messages;
+   if(before){messages=await env.DB.prepare(chatMessageSelect+' WHERE m.student_id=? AND m.id<? ORDER BY m.id DESC LIMIT 100').bind(studentId,before).all();}
+   else if(after){messages=await env.DB.prepare(chatMessageSelect+' WHERE m.student_id=? AND m.id>? ORDER BY m.id ASC LIMIT 100').bind(studentId,after).all();}
+   else{messages=await env.DB.prepare(chatMessageSelect+' WHERE m.student_id=? ORDER BY m.id DESC LIMIT 100').bind(studentId).all();}
+   return json({items:before||!after?messages.results.reverse():messages.results,hasMore:messages.results.length===100});
+  }
+  if(path==='/api/chat/messages'&&method==='POST'){
+   const b=await data(request),studentId=user.role==='student'?user.id:sid(String(b.studentId||''));
+   await checkChatActor(env,user,studentId);
+   const body=String(b.body||'').trim();if(!body||body.length>1500)bad('Digite uma mensagem de até 1.500 caracteres.');
+   const result:any=await env.DB.prepare('INSERT INTO chat_messages(student_id,sender_role,sender_id,body) VALUES(?,?,?,?) RETURNING id').bind(studentId,user.role,user.id,body).first();
+   return json({ok:true,id:result.id},201);
+  }
+  if(path==='/api/chat/read-state'&&method==='GET'){
+   const studentId=user.role==='student'?user.id:sid(url.searchParams.get('studentId')||'');
+   await checkChatActor(env,user,studentId);
+   const mine=user.role==='admin'?'admin':'student';
+   const row:any=await env.DB.prepare('SELECT COALESCE(MAX(id),0) AS readThrough FROM chat_messages WHERE student_id=? AND sender_role=? AND read_at IS NOT NULL').bind(studentId,mine).first();
+   return json({readThrough:Number(row?.readThrough||0)});
+  }
+  if(path==='/api/chat/unread'&&method==='GET'){
+   if(user.role==='student'){
+    if(!await paidStudent(env,user.id))return json({unread:0});
+    const row:any=await env.DB.prepare("SELECT COUNT(*) AS unread FROM chat_messages WHERE student_id=? AND sender_role='admin' AND read_at IS NULL").bind(user.id).first();
+    return json({unread:Number(row?.unread||0)});
+   }
+   auth(user,'admin');
+   const students=await env.DB.prepare(`SELECT u.id,u.subscription_until AS expires,r.price,a.expires_at AS accessUntil
+     FROM users u JOIN student_plan_access a ON a.student_id=u.id JOIN plan_requests r ON r.id=a.request_id
+     WHERE u.role='student' AND u.subscription_status='ACTIVE' AND r.status='APPROVED' AND r.price>0`).all();
+   let unread=0;
+   for(const st of students.results as any[]){if(Date.parse(st.expires)>Date.now()&&Date.parse(st.accessUntil)>Date.now()){
+     const row:any=await env.DB.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE student_id=? AND sender_role='student' AND read_at IS NULL").bind(st.id).first();unread+=Number(row?.n||0);
+   }}
+   return json({unread});
+  }
+  if(path==='/api/chat/read'&&method==='POST'){
+   const b=await data(request),studentId=user.role==='student'?user.id:sid(String(b.studentId||''));
+   await checkChatActor(env,user,studentId);
+   const through=Math.max(0,Math.floor(Number(b.throughId)||0));
+   if(!through)bad('Mensagem inválida.');
+   await env.DB.prepare(`UPDATE chat_messages SET read_at=CURRENT_TIMESTAMP
+     WHERE student_id=? AND id<=? AND sender_role=? AND read_at IS NULL`)
+     .bind(studentId,through,user.role==='admin'?'student':'admin').run();
+   return json({ok:true});
   }
   // Portal médico: acesso exclusivo com vínculo concedido pelo próprio aluno.
   if(path==='/api/student/doctor-link'&&method==='GET'){
@@ -270,7 +394,7 @@ export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
   }
   if(seg[0]==='api'&&seg[1]==='admin'&&seg[2]==='students'&&seg[3]&&method==='DELETE'){
    const id=sid(seg[3]);await env.DB.batch([
-    env.DB.prepare('DELETE FROM medical_food_plans WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM doctor_patient_links WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM workout_completions WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM workout_assignments WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM diet_items WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM plan_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM student_plan_access WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM consultation_manual_proofs WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_slots WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM payments WHERE user_id=?').bind(id),env.DB.prepare("DELETE FROM users WHERE id=? AND role='student'").bind(id)
+    env.DB.prepare("DELETE FROM chat_presence WHERE user_role='student' AND user_id=?").bind(id),env.DB.prepare('DELETE FROM medical_food_plans WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM doctor_patient_links WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM workout_completions WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM workout_assignments WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM diet_items WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM plan_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM student_plan_access WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM consultation_manual_proofs WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_slots WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM payments WHERE user_id=?').bind(id),env.DB.prepare("DELETE FROM users WHERE id=? AND role='student'").bind(id)
    ]);await writeAudit(env,user.id,'DELETE_STUDENT',id);return json({ok:true});
   }
   // Conteúdo administrativo e treinos (compatível com os cadastros versão anterior).

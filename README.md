@@ -1,4 +1,4 @@
-# Wagner Noronha — Personal Trainer | Versão 4.3.2
+# Wagner Noronha — Personal Trainer | Versão 4.4.0
 
 Plataforma web e PWA para alunos, personal trainer e médico parceiro. Interface premium preto/dourado, adaptada a celulares, tablets e computadores. **A marca exibida ao público é exclusivamente Wagner Noronha — Personal Trainer.**
 
@@ -57,10 +57,15 @@ Os nomes físicos de recursos Cloudflare existentes podem continuar com identifi
 ### Importante
 Esta versão foi testada com um ambiente D1 SQLite simulado e testes de API, **não foi implantada automaticamente** na Cloudflare. A compilação completa do front-end exige dependências npm e validação no ambiente real. Veja `docs/GUIA_PUBLICACAO_4_3.md`.
 
-## Correção 4.3.2 — imagem do perfil médico
+## Correção 4.4.0 — imagem do perfil médico
 
-A versão 4.3.1 exibia a tela de Configurações, mas o servidor não tinha a rota POST `/api/account/photo`; ao escolher a foto, mostrava **"Endereço não encontrado."**. A versão 4.3.2 cria a rota protegida exclusivamente para o perfil `doctor`, grava JPG/PNG/WEBP (até 4 MB) no bucket `MEDIA` (R2) sob `public/doctor-avatars/{id}/`, atualiza `doctor_accounts.profile_image_url` no D1 e atualiza a interface do médico após o upload.
+A versão 4.3.1 exibia a tela de Configurações, mas o servidor não tinha a rota POST `/api/account/photo`; ao escolher a foto, mostrava **"Endereço não encontrado."**. A versão 4.4.0 cria a rota protegida exclusivamente para o perfil `doctor`, grava JPG/PNG/WEBP (até 4 MB) no bucket `MEDIA` (R2) sob `public/doctor-avatars/{id}/`, atualiza `doctor_accounts.profile_image_url` no D1 e atualiza a interface do médico após o upload.
 
-**Implantação:** mantenha o binding R2 `MEDIA` e o binding D1 `DB` já existentes. A migração `0008_DOUTOR_FOTO_PERFIL.sql` deve ter sido executada uma vez para acrescentar a coluna `profile_image_url` à tabela `doctor_accounts`. Se você já vê o painel médico 4.3.1 normalmente, ela provavelmente já foi aplicada. **Não execute o 0008 novamente**, pois o SQLite D1 não permite adicionar a mesma coluna duas vezes. Para o conserto da rota na versão 4.3.2 não há novo SQL.
+**Implantação:** mantenha o binding R2 `MEDIA` e o binding D1 `DB` já existentes. A migração `0008_DOUTOR_FOTO_PERFIL.sql` deve ter sido executada uma vez para acrescentar a coluna `profile_image_url` à tabela `doctor_accounts`. Se você já vê o painel médico 4.3.1 normalmente, ela provavelmente já foi aplicada. **Não execute o 0008 novamente**, pois o SQLite D1 não permite adicionar a mesma coluna duas vezes. Para o conserto da rota na versão 4.4.0 não há novo SQL.
 
 Após o deploy, entre como Dr. Alison, acesse **Configurações → Alterar imagem**, selecione um JPG/PNG/WEBP até 4 MB e confirme a imagem no menu inferior esquerdo e no cabeçalho. Se aparecer erro de upload no R2, verifique o binding `MEDIA`.
+
+
+## Atualização 4.4: chat privado para plano pago e fotos individuais
+
+Consulte `docs/IMPLANTACAO_PERFIS_CHAT_4_4.md`. No banco D1 **existente** da versão 4.3.2, execute a migração `migrations/0009_CHAT_TEMPO_REAL_PERFIS.sql` (uma vez) e publique a nova versão. O novo chat troca mensagens por consultas HTTP a cada ~2,5 segundos, mantendo histórico no D1. Não há WebSockets nem notificações push nesta versão.
