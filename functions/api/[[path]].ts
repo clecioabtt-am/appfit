@@ -47,14 +47,14 @@ export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
   }
   if(path==='/api/auth/login'&&method==='POST'){
    const b=await data(request);const email=asText(b.email,180).toLowerCase(),password=String(b.password||'');
-   const doctor=await env.DB.prepare('SELECT id,name,email,password_hash FROM doctor_accounts WHERE email=? AND active=1').bind(email).first();
-   if(doctor&&await verifyPassword(password,doctor.password_hash))return json({token:await signToken({id:doctor.id,role:'doctor'},env.JWT_SECRET),user:{id:doctor.id,name:doctor.name,email:doctor.email,role:'doctor',subscriptionStatus:'ACTIVE'}});
+   const doctor=await env.DB.prepare('SELECT id,name,email,password_hash,profile_image_url AS profile_image_url FROM doctor_accounts WHERE email=? AND active=1').bind(email).first();
+   if(doctor&&await verifyPassword(password,doctor.password_hash))return json({token:await signToken({id:doctor.id,role:'doctor'},env.JWT_SECRET),user:{id:doctor.id,name:doctor.name,email:doctor.email,role:'doctor',profileImageUrl:doctor.profile_image_url||null,subscriptionStatus:'ACTIVE'}});
    const u=await env.DB.prepare('SELECT id,name,email,role,password_hash,subscription_status,subscription_until FROM users WHERE email=?').bind(email).first();
    if(!u||!await verifyPassword(password,u.password_hash))bad('E-mail ou senha incorretos.',401);
    const a=await checkPlanStatus(env,u);return json({token:await signToken({id:u.id,role:u.role},env.JWT_SECRET),user:{id:u.id,name:u.name,email:u.email,role:u.role,subscriptionStatus:a.subscriptionStatus,subscriptionUntil:a.subscriptionUntil}});
   }
   const user=await readUser(request,env);auth(user);
-  if(path==='/api/me'&&method==='GET'&&user.role==='doctor')return json({user:{id:user.id,name:user.name,email:user.email,role:'doctor',subscriptionStatus:'ACTIVE'}});
+  if(path==='/api/me'&&method==='GET'&&user.role==='doctor')return json({user:{id:user.id,name:user.name,email:user.email,role:'doctor',profileImageUrl:user.profile_image_url||null,subscriptionStatus:'ACTIVE'}});
   if(path==='/api/me'&&method==='GET'){
    const v=await checkPlanStatus(env,user);const access=await env.DB.prepare('SELECT a.plan_id AS planId,p.name AS planName,a.expires_at AS expiresAt FROM student_plan_access a JOIN plans p ON p.id=a.plan_id WHERE a.student_id=?').bind(user.id).first();
    let photo=null;try{const rr=await env.DB.prepare('SELECT profile_image_url FROM users WHERE id=?').bind(user.id).first();photo=rr?.profile_image_url||null;}catch{}
