@@ -2,13 +2,17 @@ import {Env,json,fail,hashPassword,verifyPassword,signToken,readUser,ensureActiv
 type Context={request:Request;env:Env;params:{path?:string|string[]}};
 class HttpError extends Error {constructor(public status:number,message:string){super(message);}}
 const bad=(message:string,status=400):never=>{throw new HttpError(status,message);};
-const auth=(u:any,role?:'admin'|'student')=>{if(!u)bad('Faça login para continuar.',401);if(role&&u.role!==role)bad('Acesso não autorizado.',403);return u;};
+const auth=(u:any,role?:'admin'|'student'|'doctor')=>{if(!u)bad('Faça login para continuar.',401);if(role&&u.role!==role)bad('Acesso não autorizado.',403);return u;};
 const pathFrom=(p:Context['params'])=>'/api/'+(Array.isArray(p.path)?p.path.join('/'):p.path||'');
 const sid=(n:string)=>{const v=Number(n);if(!Number.isSafeInteger(v)||v<=0)bad('Identificador inválido.');return v;};
 const data=async (req:Request)=>{try{return await req.json()}catch{bad('Envie dados JSON válidos.');}};
 const fetchPlan=async (env:Env,id:number)=>env.DB.prepare('SELECT id,name,price,period,duration_days AS durationDays,description,active FROM plans WHERE id=?').bind(id).first();
 const fetchPix=async(env:Env,id:number)=>env.DB.prepare('SELECT plan_id AS planId,pix_key AS pixKey,pix_type AS pixType,recipient_name AS recipientName,instructions FROM plan_pix_config WHERE plan_id=?').bind(id).first();
 const getSettings=async(env:Env)=>env.DB.prepare('SELECT brand_name AS brandName,logo_url AS logoUrl,hero_image_url AS heroImageUrl,inside_image_url AS insideImageUrl,hero_title AS heroTitle,hero_subtitle AS heroSubtitle,consultation_pix_key AS consultationPixKey,consultation_pix_recipient AS consultationPixRecipient FROM app_settings WHERE id=1').first();
+const publicDoctor=async(env:Env)=>env.DB.prepare('SELECT name,crm,title,whatsapp,discount_percent AS discountPercent,instagram,facebook,website,articles,enabled FROM doctor_public_info WHERE id=1').first();
+const hasDoctorLink=async(env:Env,doctorId:number,studentId:number)=>!!await env.DB.prepare("SELECT id FROM doctor_patient_links WHERE doctor_id=? AND student_id=? AND status='ACTIVE'").bind(doctorId,studentId).first();
+const doctorForStudent=async(env:Env)=>env.DB.prepare('SELECT id FROM doctor_accounts WHERE active=1 ORDER BY id LIMIT 1').first();
+const doctorPlans=async(env:Env,where:string,args:any[])=>env.DB.prepare(`SELECT p.id,p.doctor_id AS doctorId,p.student_id AS studentId,u.name AS studentName,p.title,p.overview,p.meals_json AS mealsJson,p.status,p.version,p.pdf_name AS pdfName,p.published_at AS publishedAt,p.created_at AS createdAt,p.updated_at AS updatedAt FROM medical_food_plans p JOIN users u ON u.id=p.student_id ${where} ORDER BY p.id DESC`).bind(...args).all();
 const getRequests=async(env:Env,where='',args:any[]=[])=>env.DB.prepare(`SELECT r.id,r.student_id AS studentId,u.name AS studentName,u.email AS studentEmail,u.phone AS studentPhone,r.plan_id AS planId,r.plan_name AS planName,r.price,r.duration_days AS durationDays,r.pix_key_snapshot AS pixKey,r.recipient_snapshot AS recipientName,r.status,r.proof_name AS proofName,r.requested_at AS requestedAt,r.proof_sent_at AS proofSentAt,r.decided_at AS decidedAt,r.decision_note AS decisionNote,r.activated_until AS activatedUntil FROM plan_requests r JOIN users u ON u.id=r.student_id ${where} ORDER BY r.id DESC`).bind(...args).all();
 const sendPrivateFile=async(env:Env,key:string,mime:string,name:string)=>{if(!key.startsWith('private/proofs/'))return fail('Arquivo inválido.',403);const obj=await env.MEDIA.get(key);if(!obj)return fail('Comprovante não encontrado.',404);return new Response(obj.body,{headers:{'content-type':mime||'application/octet-stream','content-disposition':`inline; filename="${String(name||'comprovante').replace(/["\r\n]/g,'_')}"`,'cache-control':'no-store','x-content-type-options':'nosniff'}});};
 const parseProof=async(req:Request,env:Env,ownerId:number,kind:string)=>{const form=await req.formData();const file=form.get('file');if(!(file instanceof File))bad('Selecione o comprovante.');try{return await storeFile(env,file,`private/proofs/${kind}/${ownerId}`,proofTypes,8*1024*1024)}catch(e:any){bad(e.message||'Arquivo inválido.');}};
@@ -23,6 +27,7 @@ export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
   if(path==='/api/public/settings'&&method==='GET'){
    const s=await getSettings(env);return json({settings:{brandName:s.brandName,logoUrl:s.logoUrl,heroImageUrl:s.heroImageUrl,insideImageUrl:s.insideImageUrl,heroTitle:s.heroTitle,heroSubtitle:s.heroSubtitle}});
   }
+  if(path==='/api/public/doctor'&&method==='GET')return json({doctor:await publicDoctor(env)});
   if(path==='/api/public/plans'&&method==='GET'){
    const rows=await env.DB.prepare('SELECT id,name,price,period,duration_days AS durationDays,description FROM plans WHERE active=1 ORDER BY price,id').all();return json({plans:rows.results});
   }
@@ -41,23 +46,80 @@ export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
    try{const r=await env.DB.prepare("INSERT INTO users(name,email,password_hash,role,cpf,phone,subscription_status) VALUES(?,?,?,'student',?,?,'INACTIVE') RETURNING id").bind(name,email,await hashPassword(b.password),cpf,phone).first();const token=await signToken({id:r.id,role:'student'},env.JWT_SECRET);return json({token,user:{id:r.id,name,email,role:'student',subscriptionStatus:'INACTIVE'}},201);}catch{bad('Este e-mail já está cadastrado.',409);}
   }
   if(path==='/api/auth/login'&&method==='POST'){
-   const b=await data(request);const u=await env.DB.prepare('SELECT id,name,email,role,password_hash,subscription_status,subscription_until FROM users WHERE email=?').bind(asText(b.email,180).toLowerCase()).first();
-   if(!u||!await verifyPassword(String(b.password||''),u.password_hash))bad('E-mail ou senha incorretos.',401);
+   const b=await data(request);const email=asText(b.email,180).toLowerCase(),password=String(b.password||'');
+   const doctor=await env.DB.prepare('SELECT id,name,email,password_hash FROM doctor_accounts WHERE email=? AND active=1').bind(email).first();
+   if(doctor&&await verifyPassword(password,doctor.password_hash))return json({token:await signToken({id:doctor.id,role:'doctor'},env.JWT_SECRET),user:{id:doctor.id,name:doctor.name,email:doctor.email,role:'doctor',subscriptionStatus:'ACTIVE'}});
+   const u=await env.DB.prepare('SELECT id,name,email,role,password_hash,subscription_status,subscription_until FROM users WHERE email=?').bind(email).first();
+   if(!u||!await verifyPassword(password,u.password_hash))bad('E-mail ou senha incorretos.',401);
    const a=await checkPlanStatus(env,u);return json({token:await signToken({id:u.id,role:u.role},env.JWT_SECRET),user:{id:u.id,name:u.name,email:u.email,role:u.role,subscriptionStatus:a.subscriptionStatus,subscriptionUntil:a.subscriptionUntil}});
   }
   const user=await readUser(request,env);auth(user);
+  if(path==='/api/me'&&method==='GET'&&user.role==='doctor')return json({user:{id:user.id,name:user.name,email:user.email,role:'doctor',subscriptionStatus:'ACTIVE'}});
   if(path==='/api/me'&&method==='GET'){
    const v=await checkPlanStatus(env,user);const access=await env.DB.prepare('SELECT a.plan_id AS planId,p.name AS planName,a.expires_at AS expiresAt FROM student_plan_access a JOIN plans p ON p.id=a.plan_id WHERE a.student_id=?').bind(user.id).first();
    let photo=null;try{const rr=await env.DB.prepare('SELECT profile_image_url FROM users WHERE id=?').bind(user.id).first();photo=rr?.profile_image_url||null;}catch{}
    return json({user:{id:user.id,name:user.name,email:user.email,role:user.role,phone:user.phone,profileImageUrl:photo,subscriptionStatus:v.subscriptionStatus,subscriptionUntil:user.subscription_until,activePlan:access}});
   }
   if(path==='/api/account/password'&&method==='POST'){
-   const b=await data(request);const r=await env.DB.prepare('SELECT password_hash FROM users WHERE id=?').bind(user.id).first();if(!await verifyPassword(String(b.currentPassword||''),r.password_hash))bad('Senha atual incorreta.',403);if(String(b.newPassword||'').length<8)bad('A nova senha precisa ter pelo menos 8 caracteres.');
-   await env.DB.prepare('UPDATE users SET password_hash=? WHERE id=?').bind(await hashPassword(String(b.newPassword)),user.id).run();return json({ok:true});
+   const b=await data(request);const r=await env.DB.prepare(`SELECT password_hash FROM ${user.role==='doctor'?'doctor_accounts':'users'} WHERE id=?`).bind(user.id).first();if(!await verifyPassword(String(b.currentPassword||''),r.password_hash))bad('Senha atual incorreta.',403);if(String(b.newPassword||'').length<8)bad('A nova senha precisa ter pelo menos 8 caracteres.');
+   await env.DB.prepare(`UPDATE ${user.role==='doctor'?'doctor_accounts':'users'} SET password_hash=? WHERE id=?`).bind(await hashPassword(String(b.newPassword)),user.id).run();return json({ok:true});
   }
   if(path==='/api/student/profile-photo'&&method==='POST'){
    auth(user,'student');const fd=await request.formData();const file=fd.get('file');if(!(file instanceof File))bad('Selecione sua foto.');let f;try{f=await storeFile(env,file,`profiles/${user.id}`,imageTypes);}catch(e:any){bad(e.message);}
    const photo=`/media/${encodeURIComponent(f.key)}`;await env.DB.prepare('UPDATE users SET profile_image_url=? WHERE id=?').bind(photo,user.id).run();return json({url:photo});
+  }
+  // Portal médico: acesso exclusivo com vínculo concedido pelo próprio aluno.
+  if(path==='/api/student/doctor-link'&&method==='GET'){
+    auth(user,'student');const dr=await doctorForStudent(env);const link=dr?await env.DB.prepare('SELECT status,consented_at AS consentedAt,revoked_at AS revokedAt FROM doctor_patient_links WHERE doctor_id=? AND student_id=?').bind(dr.id,user.id).first():null;
+    return json({linked:link?.status==='ACTIVE',consentedAt:link?.consentedAt||null});
+  }
+  if(path==='/api/student/doctor-link'&&method==='POST'){
+    auth(user,'student');const b=await data(request);const dr=await doctorForStudent(env);if(!dr)bad('Médico ainda não configurado.',404);
+    if(b.consent===true){await env.DB.prepare("INSERT INTO doctor_patient_links(doctor_id,student_id,status,consented_at,revoked_at) VALUES(?,?,'ACTIVE',CURRENT_TIMESTAMP,NULL) ON CONFLICT(doctor_id,student_id) DO UPDATE SET status='ACTIVE',consented_at=CURRENT_TIMESTAMP,revoked_at=NULL").bind(dr.id,user.id).run();}
+    else if(b.consent===false){await env.DB.prepare("UPDATE doctor_patient_links SET status='REVOKED',revoked_at=CURRENT_TIMESTAMP WHERE doctor_id=? AND student_id=?").bind(dr.id,user.id).run();}
+    else bad('Confirme sua decisão de autorização.');return json({ok:true,linked:b.consent===true});
+  }
+  if(path==='/api/student/medical-plans'&&method==='GET'){
+    auth(user,'student');const rows=await doctorPlans(env,"WHERE p.student_id=? AND p.status='PUBLISHED'",[user.id]);return json({items:rows.results});
+  }
+  if(path==='/api/doctor/patients'&&method==='GET'){
+    auth(user,'doctor');const rows=await env.DB.prepare("SELECT u.id,u.name,u.email,l.consented_at AS consentedAt FROM doctor_patient_links l JOIN users u ON u.id=l.student_id WHERE l.doctor_id=? AND l.status='ACTIVE' AND u.role='student' ORDER BY u.name").bind(user.id).all();return json({items:rows.results});
+  }
+  if(path==='/api/doctor/plans'&&method==='GET'){
+    auth(user,'doctor');const rows=await doctorPlans(env,"JOIN doctor_patient_links l ON l.doctor_id=p.doctor_id AND l.student_id=p.student_id AND l.status='ACTIVE' WHERE p.doctor_id=?",[user.id]);return json({items:rows.results});
+  }
+  if(path==='/api/doctor/plans'&&method==='POST'){
+    auth(user,'doctor');const b=await data(request),studentId=sid(String(b.studentId));if(!await hasDoctorLink(env,user.id,studentId))bad('Paciente não autorizou o vínculo com este médico.',403);
+    const title=asText(b.title,140),overview=asText(b.overview,4000);if(title.length<3)bad('Informe o título do plano.');const meals=Array.isArray(b.meals)?b.meals:[];if(meals.length>15)bad('Limite de 15 refeições.');
+    const clean=meals.map((m:any)=>({time:asText(m.time,12),title:asText(m.title,110),description:asText(m.description,2200)})).filter((m:any)=>m.title);
+    const version=await env.DB.prepare('SELECT COALESCE(MAX(version),0)+1 AS n FROM medical_food_plans WHERE doctor_id=? AND student_id=?').bind(user.id,studentId).first();
+    const r=await env.DB.prepare("INSERT INTO medical_food_plans(doctor_id,student_id,title,overview,meals_json,version,status) VALUES(?,?,?,?,?,?,'DRAFT') RETURNING id").bind(user.id,studentId,title,overview,JSON.stringify(clean),version.n).first();return json({ok:true,id:r.id},201);
+  }
+  if(seg[0]==='api'&&seg[1]==='doctor'&&seg[2]==='plans'&&seg[3]&&seg[4]==='publish'&&method==='POST'){
+    auth(user,'doctor');const id=sid(seg[3]);const r=await env.DB.prepare("SELECT id,student_id AS studentId,status,title,overview,meals_json AS mealsJson,pdf_key AS pdfKey FROM medical_food_plans WHERE id=? AND doctor_id=?").bind(id,user.id).first();
+    if(!r)bad('Plano não encontrado.',404);if(!await hasDoctorLink(env,user.id,r.studentId))bad('Vínculo não autorizado.',403);
+    if(r.status!=='DRAFT')bad('Plano já publicado e preservado no histórico.',409);
+    if(!r.overview&&!r.pdfKey&&JSON.parse(r.mealsJson||'[]').length===0)bad('Inclua orientações, refeições ou anexo antes de publicar.');
+    await env.DB.prepare("UPDATE medical_food_plans SET status='PUBLISHED',published_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='DRAFT'").bind(id).run();return json({ok:true});
+  }
+  if(seg[0]==='api'&&seg[1]==='doctor'&&seg[2]==='plans'&&seg[3]&&method==='PUT'&&seg.length===4){
+    auth(user,'doctor');const id=sid(seg[3]);const r=await env.DB.prepare('SELECT student_id AS studentId,status FROM medical_food_plans WHERE id=? AND doctor_id=?').bind(id,user.id).first();if(!r)bad('Plano não encontrado.',404);if(!await hasDoctorLink(env,user.id,r.studentId))bad('Vínculo não autorizado.',403);if(r.status!=='DRAFT')bad('Crie nova versão para alterar um plano já publicado.',409);
+    const b=await data(request),title=asText(b.title,140),overview=asText(b.overview,4000),meals=Array.isArray(b.meals)?b.meals:[];if(title.length<3||meals.length>15)bad('Título inválido ou mais de 15 refeições.');const clean=meals.map((m:any)=>({time:asText(m.time,12),title:asText(m.title,110),description:asText(m.description,2200)})).filter((m:any)=>m.title);
+    await env.DB.prepare('UPDATE medical_food_plans SET title=?,overview=?,meals_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(title,overview,JSON.stringify(clean),id).run();return json({ok:true});
+  }
+  if(seg[0]==='api'&&seg[1]==='doctor'&&seg[2]==='plans'&&seg[3]&&seg[4]==='pdf'&&method==='POST'){
+    auth(user,'doctor');const id=sid(seg[3]);const r=await env.DB.prepare('SELECT student_id AS studentId,status,pdf_key AS pdfKey FROM medical_food_plans WHERE id=? AND doctor_id=?').bind(id,user.id).first();if(!r)bad('Plano não encontrado.',404);if(!await hasDoctorLink(env,user.id,r.studentId))bad('Vínculo não autorizado.',403);if(r.status!=='DRAFT')bad('Plano publicado não pode ser alterado.',409);
+    const form=await request.formData(),file=form.get('file');if(!(file instanceof File)||file.type!=='application/pdf')bad('Envie um PDF válido.');let f;try{f=await storeFile(env,file,`private/medical-plans/${user.id}/${r.studentId}`,['application/pdf'],10*1048576);}catch(e:any){bad(e.message);}
+    await env.DB.prepare('UPDATE medical_food_plans SET pdf_key=?,pdf_name=?,pdf_mime=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(f.key,f.name,f.mime,id).run();if(r.pdfKey)await env.MEDIA.delete(r.pdfKey).catch(()=>{});return json({ok:true});
+  }
+  if(seg[0]==='api'&&seg[1]==='medical'&&seg[2]==='plans'&&seg[3]&&seg[4]==='pdf'&&method==='GET'){
+    const id=sid(seg[3]);const r=await env.DB.prepare('SELECT doctor_id AS doctorId,student_id AS studentId,status,pdf_key AS pdfKey,pdf_name AS pdfName FROM medical_food_plans WHERE id=?').bind(id).first();if(!r||!r.pdfKey)bad('Arquivo não encontrado.',404);
+    if(user.role==='student'){if(r.studentId!==user.id||r.status!=='PUBLISHED')bad('Arquivo indisponível.',403);}
+    else if(user.role==='doctor'){if(r.doctorId!==user.id||!await hasDoctorLink(env,user.id,r.studentId))bad('Arquivo não autorizado.',403);}
+    else bad('Informações clínicas restritas ao paciente e médico.',403);
+    if(!String(r.pdfKey).startsWith('private/medical-plans/'))bad('Caminho inválido.',403);
+    const object=await env.MEDIA.get(r.pdfKey);if(!object)bad('Arquivo PDF não encontrado.',404);
+    return new Response(object.body,{headers:{'content-type':'application/pdf','content-disposition':`inline; filename="${String(r.pdfName||'plano.pdf').replace(/["\r\n]/g,'_')}"`,'cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; sandbox"}});
   }
   // Fluxo de planos escolhido PELO ALUNO, sem checkout/webhook Asaas.
   if(path==='/api/student/requests'&&method==='GET'){
@@ -128,6 +190,13 @@ export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
     env.DB.prepare("SELECT COUNT(*) n FROM consultation_requests WHERE status IN ('REQUESTED','AVAILABILITY_SENT','AWAITING_PAYMENT')").first()
    ]);return json({students:students.n,active:active.n,requests:requests.n,consultations:consults.n});
   }
+  if(path==='/api/admin/doctor-public'&&method==='GET')return json({doctor:await publicDoctor(env)});
+  if(path==='/api/admin/doctor-public'&&method==='PUT'){
+    const b=await data(request),whatsapp=String(b.whatsapp||'').replace(/\D/g,'').slice(0,15);
+    const links=['instagram','facebook','website','articles'];const safe:any={};for(const k of links){const v=asText(b[k],400);try{if(!['https:'].includes(new URL(v).protocol))bad('Use links HTTPS válidos.');}catch{bad('URL inválida no campo '+k);}safe[k]=v;}
+    if(whatsapp.length<10||whatsapp.length>15)bad('WhatsApp com DDI e DDD é obrigatório.');const discount=Number(b.discountPercent);if(!Number.isInteger(discount)||discount<0||discount>100)bad('Percentual inválido.');
+    await env.DB.prepare('UPDATE doctor_public_info SET whatsapp=?,discount_percent=?,instagram=?,facebook=?,website=?,articles=?,enabled=?,updated_at=CURRENT_TIMESTAMP WHERE id=1').bind(whatsapp,discount,safe.instagram,safe.facebook,safe.website,safe.articles,b.enabled?1:0).run();return json({ok:true});
+  }
   if(path==='/api/admin/settings'&&method==='GET')return json({settings:await getSettings(env)});
   if(path==='/api/admin/settings'&&method==='PUT'){
    const b=await data(request);await env.DB.prepare('UPDATE app_settings SET brand_name=?,hero_title=?,hero_subtitle=?,consultation_pix_key=?,consultation_pix_recipient=?,updated_at=CURRENT_TIMESTAMP WHERE id=1').bind(asText(b.brandName,90),asText(b.heroTitle,150),asText(b.heroSubtitle,420),asText(b.consultationPixKey,160),asText(b.consultationPixRecipient,150)).run();await writeAudit(env,user.id,'UPDATE_SETTINGS',1);return json({ok:true});
@@ -181,10 +250,10 @@ export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
   }
   if(seg[0]==='api'&&seg[1]==='admin'&&seg[2]==='students'&&seg[3]&&method==='DELETE'){
    const id=sid(seg[3]);await env.DB.batch([
-    env.DB.prepare('DELETE FROM workout_completions WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM workout_assignments WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM diet_items WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM plan_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM student_plan_access WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM consultation_manual_proofs WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_slots WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM payments WHERE user_id=?').bind(id),env.DB.prepare("DELETE FROM users WHERE id=? AND role='student'").bind(id)
+    env.DB.prepare('DELETE FROM medical_food_plans WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM doctor_patient_links WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM workout_completions WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM workout_assignments WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM diet_items WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM plan_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM student_plan_access WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM consultation_manual_proofs WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_slots WHERE request_id IN (SELECT id FROM consultation_requests WHERE student_id=?)').bind(id),env.DB.prepare('DELETE FROM consultation_requests WHERE student_id=?').bind(id),env.DB.prepare('DELETE FROM payments WHERE user_id=?').bind(id),env.DB.prepare("DELETE FROM users WHERE id=? AND role='student'").bind(id)
    ]);await writeAudit(env,user.id,'DELETE_STUDENT',id);return json({ok:true});
   }
-  // Conteúdo administrativo e treinos (compatível com os cadastros AFIT 3.0).
+  // Conteúdo administrativo e treinos (compatível com os cadastros versão anterior).
   const resources:{[key:string]:{table:string,columns:string[],select:string}}={
    exercises:{table:'exercises',columns:['name','training_category','muscle_group','level','execution_mode','description','objective','instructions','benefits','common_errors','equipment','sets','reps','duration','rest','tags','video_url','image_url','active'],select:'SELECT id,name,training_category AS trainingCategory,muscle_group AS muscleGroup,level,execution_mode AS executionMode,description,objective,instructions,benefits,common_errors AS commonErrors,equipment,sets,reps,duration,rest,tags,video_url AS videoUrl,image_url AS imageUrl,active FROM exercises ORDER BY id DESC'},
    tips:{table:'tips',columns:['title','description','category','video_url','image_url','active'],select:'SELECT id,title,description,category,video_url AS videoUrl,image_url AS imageUrl,active FROM tips ORDER BY id DESC'},

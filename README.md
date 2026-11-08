@@ -1,101 +1,58 @@
-# AFIT 4.2 — CORREÇÃO DA HOME PREMIUM (WAGNER NORONHA)
+# Wagner Noronha — Personal Trainer | Versão 4.3
 
-**O que foi corrigido**
+Plataforma web e PWA para alunos, personal trainer e médico parceiro. Interface premium preto/dourado, adaptada a celulares, tablets e computadores. **A marca exibida ao público é exclusivamente Wagner Noronha — Personal Trainer.**
 
-O ZIP 4.1 continha a foto premium, mas o painel buscava a URL antiga salva em `app_settings.hero_image_url`. Além disso o CSS limitava a imagem a uma faixa vertical com `object-fit: contain`. Por isso a página publicada mostrava a foto pequena, apesar da arte aprovada.
+## Principais módulos
 
-Na versão 4.2:
-- Foto premium incluída como `/brand/wagner-hero-v42.jpg` (nome novo, evita cache antigo).
-- Hero ocupa toda a região principal, Wagner em destaque no centro, textos legíveis à esquerda e formulário interativo à direita.
-- Responsividade própria para computador, tablet e celular. A área de login continua clicável e real, sem screenshot aplicada por cima.
-- O aplicativo usa a imagem premium automaticamente mesmo que a URL da versão antiga ainda esteja salva no banco. **Não precisa de SQL para esta atualização visual.**
-- **Para trocar a foto no futuro:** Painel do administrador → Personalização → Foto da tela inicial → Substituir imagem. Uploads novos usam um prefixo versionado no R2, passando a ter prioridade sobre a imagem padrão.
-- Formulário, planos Pix, comprovantes, acesso manual, exercícios e demais funções preservados.
+### Aluno
+- Cadastro e autenticação; escolha de planos de treinamento, Pix com chave por plano, envio de comprovante e liberação manual pelo Wagner.
+- Treinos programados por dia, biblioteca de exercícios, vídeos, cronômetro de descanso, registro de conclusão, perfil e dicas.
+- **Saúde e Emagrecimento**: perfil do Dr. Alison Martins, CRM-AM 6678, chamada com desconto de 10% na primeira consulta, botão do WhatsApp com nome do aluno e origem Wagner Noronha pré-preenchidos. O aluno revisa e envia a mensagem no próprio WhatsApp.
+- Links para Instagram, Facebook, site oficial e artigos do Dr. Alison.
+- Autorização explícita para vincular seu cadastro ao Dr. Alison; pode ser revogada na mesma aba.
+- **Minha dieta**: orientações antigas e novos planos médicos publicados, refeições detalhadas, histórico por versão e visualização de PDF privado. A aba funciona mesmo sem assinatura ativa de treinos.
 
-**Instalação:** extraia o ZIP, publique a pasta `wagner-noronha-afit` como raiz do projeto (ou configure essa pasta como Root Directory). Build command `npm run build`; output `dist`; preserve bindings `DB` (D1) e `MEDIA` (R2). Se usar upload manual do `dist`, primeiro compile o projeto. Não publique o ZIP diretamente se o seu fluxo exigir a pasta `dist`.
+### Personal Wagner (administrador)
+- Gestão de alunos, planos, Pix, comprovantes, aprovação manual, consultorias, exercícios, treinos por aluno, dicas e imagens da plataforma.
+- **Parceria Dr. Alison**: edição do número de WhatsApp, links, percentual e ativação da divulgação. **Sem acesso aos planos médicos confidenciais.**
 
-**Se a foto antiga ainda aparecer depois do novo deploy:** verifique se o deploy recebeu de fato o arquivo `brand/wagner-hero-v42.jpg` e o bundle de código novo. A página do Cloudflare Pages pode ter URL provisória diferente da produção. Atualize a página completamente e reinicie o PWA.
+### Dr. Alison (médico)
+- Login separado no mesmo formulário de entrada, identificado automaticamente pelo sistema.
+- Lista **somente de alunos que autorizaram o vínculo**, com nome e e-mail. Não tem acesso às cobranças Pix ou ao cadastro de outros alunos.
+- Criação e edição de **rascunhos** de orientações alimentares por paciente (título, orientações, horário, refeições e observações), upload opcional de PDF privado (máx. 10 MB) e botão **Publicar**.
+- O plano publicado não pode ser alterado; criar nova versão preserva o histórico para o aluno.
+- Troca de senha pelo próprio painel.
 
----
+## Acesso médico inicial
+- E-mail: `alisonmartins@gmail.com`
+- Senha inicial: a senha que foi solicitada no desenvolvimento. **Trocar no primeiro acesso**, pela opção Minha senha.
+- Criado por hash PBKDF2 na migração `migrations/0007_PARCEIRA_SAUDE_DR_ALISON_D1.sql`; nenhuma senha em texto puro é enviada ao front-end nem salva diretamente no banco.
+- O médico é mantido em `doctor_accounts` para preservar a restrição antiga de perfis na tabela `users` (admin/student) do banco em uso.
 
-# Wagner Noronha Personal Trainer · AFIT 4.1
+## Implantação em Cloudflare Pages — banco já existente
 
-Aplicativo web responsivo (PWA) com Cloudflare Pages + Pages Functions, D1 e R2. **Sem integração Asaas para pagamentos novos.** Pagamento por **chave Pix própria**, com escolha de plano pelo aluno, comprovante privado e liberação exclusivamente manual pelo administrador.
+**Faça backup do banco D1 e do bucket R2 ANTES de atualizar.** Execute os passos na ordem:
 
-## Atualização 4.1 — apresentação inicial aprovada (07/11/2026)
+1. No painel Cloudflare Pages, identifique o projeto atualmente publicado e o banco e bucket já conectados. Preserve os bindings existentes `DB` (D1) e `MEDIA` (R2). Não crie um banco novo por engano.
+2. Se o sistema atual está na versão 4.2, execute **somente** o arquivo `migrations/0007_PARCEIRA_SAUDE_DR_ALISON_D1.sql` no D1 de produção, pela aba Console. Ele cria tabelas novas, preserva alunos e treinos e configura o acesso médico inicial.
+3. Extraia este ZIP, entre na pasta `wagner-noronha-personal` e use `npm install` e `npm run build`. No projeto Cloudflare Pages, configure **Build command**: `npm run build`, **Output directory**: `dist`, e Root directory na pasta deste projeto, se o repositório tiver outras pastas.
+4. Faça novo deploy contendo os arquivos de origem e Pages Functions; confirme que `/api/health` e `/api/public/doctor` respondem. O PWA usa um cache novo para carregar os arquivos atualizados.
+5. Acesse o login com as credenciais iniciais informadas para o médico e altere imediatamente a senha. A senha do administrador Wagner permanece inalterada.
+6. No painel Wagner, abra **Parceria Dr. Alison**, confirme o WhatsApp com DDI, os endereços oficiais e os 10% de desconto.
+7. Crie um aluno de teste, abra **Saúde e Emagrecimento**, autorize o vínculo, entre como médico e publique um rascunho de teste. Confira em **Minha dieta** do aluno. Depois revogue o vínculo e confirme que ele deixa de aparecer na lista do médico.
 
-Esta atualização modifica a **tela pública de entrada** para seguir a composição visual aprovada: fotografia do Wagner ampliada e destacada ao centro, fundo com iluminação dourada sutil, chamada "TRANSFORME SUA EVOLUÇÃO" organizada à esquerda e formulário de acesso em **card independente à direita**. No celular, a fotografia aparece em destaque na parte superior, com títulos legíveis na base e formulário abaixo, sem esconder o rosto com a logo. O cabeçalho mantém a marca em área própria.
+### Se o banco é novo e está vazio
+Execute `migrations/0001_INSTALACAO_NOVA.sql` (apenas banco vazio), depois `migrations/0005_PIX_MANUAL_BANCO_EXISTENTE.sql`, depois `migrations/0007_PARCEIRA_SAUDE_DR_ALISON_D1.sql`. A configuração do login Wagner existente deve ser realizada pelo procedimento de bootstrap da versão 4.2. Nunca rode o `0001` em banco com dados.
 
-**Arquivos alterados sobre a 4.0:** `src/styles.css` (CSS responsivo do hero), `public/brand/wagner-hero.jpg` (fotografia derivada da referência visual aprovada), `public/sw.js` (renovação do cache PWA), `package.json` (versão) e este `README.md`.
+### Banco e storage
+Os nomes físicos de recursos Cloudflare existentes podem continuar com identificadores históricos como `afit-database` e `afit-media`; **não os renomeie sem migração**, pois são recursos de infraestrutura e não a marca exibida ao aluno.
 
-**Esta atualização visual não exige nova migração SQL.** Preserve o mesmo banco Cloudflare D1 e bucket R2. Se a foto da entrada foi substituída anteriormente pelo administrador e está salva como URL em `app_settings.hero_image_url`, a página continuará usando essa imagem personalizada. Para retornar à nova imagem padrão, defina esse campo como `/brand/wagner-hero.jpg` no banco, ou envie novamente a nova foto pelo painel **Personalização**.
+### Segurança dos documentos médicos
+- Documentos são salvos no R2 sob `private/medical-plans/` e servidos somente pela rota autenticada `/api/medical/plans/:id/pdf`.
+- O paciente só pode acessar os próprios planos publicados; o médico só pode acessar planos de pacientes atualmente vinculados, inclusive para PDF.
+- A revogação do vínculo bloqueia novo acesso do médico, mas não apaga os planos já publicados que pertencem ao paciente.
+- O administrador do personal não tem rotas para visualizar os arquivos clínicos. Dados da parceria pública são separados.
+- Dados sensíveis exigem controle de acesso, backup, retenção e governança de privacidade conforme a legislação aplicável. Antes da utilização clínica real, valide os aspectos profissionais, jurídicos e de segurança com os responsáveis.
 
-Após publicar, acesse a página e atualize-a; em PWA já instalado, feche e reabra para aplicar a nova versão do service worker. Se a foto antiga permanecer visível, confira se houve atualização no deploy e invalide o cache do navegador.
-
-## O que mudou
-
-- Logomarca e fotografias enviadas pelo cliente, aplicadas à entrada, menus, painéis e ícones PWA.
-- Layout preto/grafite com detalhes metálicos dourados/prateados, botões com profundidade e adaptações de celular.
-- Configuração de **chave Pix por plano** (cópia disponível somente após a escolha confirmada).
-- Aluno confirma o plano, gera uma solicitação associada à própria conta, anexa imagem/PDF e acompanha o status.
-- Administrador seleciona o aluno pelo painel de solicitações, visualiza plano e comprovante, aprova ou rejeita. Somente a aprovação ativa a assinatura pela duração do plano (renovações estendem a validade quando já ativa).
-- Comprovantes guardados em `R2/private/proofs`, acessíveis apenas em rotas autenticadas (aluno proprietário e administrador).
-- Consultoria online avulsa continua com agendamento; pagamento também passa para Pix + envio de comprovante + aprovação manual.
-- Personalização da **logo, foto de entrada e foto interna**, mais títulos e chave Pix da consultoria, pelo painel do Wagner.
-- Cadastro e gerência de alunos, biblioteca de exercícios com vídeos, treino semanal individual, registros de conclusão, dicas e dietas.
-- Recuperação de indicadores reais de treinos; removeu o progresso fictício de 52% do painel antigo.
-- Banco antigo de `users`, `plans`, `exercises`, `tips`, `diet_items`, `workout_assignments`, `workout_completions`, `consultation_requests`, `consultation_slots` e `payments` preservado.
-
-## IMPORTANTE — Antes de implantar
-
-1. **Faça backup do D1 e do R2**. O pacote não foi implantado na sua conta Cloudflare nem testado com o banco de produção.
-2. Para um D1 **já existente**, execute no console SQL do D1 **somente** `migrations/0005_PIX_MANUAL_BANCO_EXISTENTE.sql` (e `migrations/0006_INCLUIR_PLANO_TESTE_OPCIONAL.sql` caso deseje o teste grátis). **Não execute** `0001_INSTALACAO_NOVA.sql` num banco com usuários.
-3. Para D1 **novo e vazio**, execute `0001_INSTALACAO_NOVA.sql` e, em seguida, `0005_PIX_MANUAL_BANCO_EXISTENTE.sql`. `0006` é opcional, pois o banco novo já inclui o teste.
-4. Configure os bindings do projeto Cloudflare Pages: D1 **`DB`** → seu banco `afit-database`; R2 **`MEDIA`** → bucket `afit-media`. Mantenha seu identificador de banco atual. O arquivo opcional `wrangler.example.jsonc` tem `database_id` de exemplo; substitua pelo ID real ou gerencie os bindings pelo painel Cloudflare.
-5. Configure o Secret **`JWT_SECRET`** com valor aleatório longo e privado. Para usar o assistente de criação de administrador, configure também **`SETUP_TOKEN`**. Não publique seus secrets. Não é necessário `ASAAS_API_KEY`, `ASAAS_ENV` ou `ASAAS_WEBHOOK_TOKEN`.
-6. O arquivo `scripts/02_CONFIGURAR_LOGIN_WAGNER_EXECUTAR_UMA_VEZ.sql` permite definir o login solicitado pelo cliente em um banco existente ou novo. **Esse passo é manual e deliberado**, pois redefine a senha do administrador principal. Execute uma única vez e troque a senha no menu **Minha conta** antes de divulgar o endereço. **Nunca envie esse script a um repositório público**.
-7. Implante o conteúdo na Cloudflare Pages. **Build:** `npm run build`; **Output:** `dist`; Framework: `None` ou Vite/React, conforme a interface Cloudflare. Na mesma conta, verifique se `Functions` estão ativas. O pacote contém `functions/api/[[path]].ts` e `functions/media/[[path]].ts`.
-8. Abra a página, entre como administrador, acesse **Planos e Pix**, cadastre a chave Pix em cada plano pago e configure o Pix da consultoria em **Personalização**. Sem chave Pix no plano pago, a seleção será bloqueada para impedir o aluno de pagar para uma conta incorreta.
-
-### Login inicial solicitado (requer executar script SQL de configuração)
-
-- E-mail: `wagnernoronha@personal.com`
-- Senha temporária: a senha que você forneceu na conversa, implementada como hash PBKDF2 no script acima.
-- **Segurança:** para evitar expor uma credencial permanente em fonte pública, o aplicativo não tem senha padrão hardcoded no frontend. A senha definida no script deve ser trocada após o primeiro acesso.
-
-## Fluxo de pagamento
-
-1. O aluno cria conta e entra no aplicativo.
-2. Seleciona e **confirma** um plano (salvo em `plan_requests` com status `AWAITING_PROOF`, valor e Pix daquele momento).
-3. Copia a chave Pix, paga e envia comprovante de até 8 MB (JPEG, PNG, WebP ou PDF).
-4. O pedido passa a `PROOF_SENT`, ficando visível ao personal.
-5. O personal verifica **na própria conta Pix/banco** se o pagamento efetivamente entrou. O simples envio do comprovante **não prova pagamento**.
-6. Em **Pedidos Pix**, o personal filtra pelo aluno, verifica o plano, abre o comprovante e clica em **Aprovar pagamento e liberar plano**.
-7. O servidor só ativa `users.subscription_status='ACTIVE'` e calcula `subscription_until` após a aprovação; a concessão é registrada em `student_plan_access` e em `admin_audit`.
-8. Em caso de rejeição, o aluno vê o motivo e pode escolher um plano novamente.
-
-O Asaas deixou de ser chamado pelo frontend ou backend e não recebe novos pedidos. Tabelas históricas do Asaas podem permanecer no banco para preservar registros antigos. Para desativar cobranças/assinaturas externas ou webhooks já configurados na conta Asaas, faça isso **também no painel do Asaas**, pois o código novo não cancela cobranças anteriores no provedor.
-
-## Treinos e conteúdo
-
-- Administrador: `Exercícios` (cadastrar/editar/excluir, mídias em R2); `Treinos por aluno` (atribuição semanal); `Dietas` (vincular ao aluno por e-mail); `Dicas`; `Alunos`; `Consultorias`.
-- Aluno com acesso ativo: `Exercícios` (filtrar, visualizar vídeo, instruções e descanso), `Meu treino` (dia atual), `Minha dieta`, `Dicas`, `Meu perfil`, `Planos`, `Consultoria`.
-- `workout_completions` armazena conclusão por aluno/exercício/dia.
-- `Consulta online`: horário oferecido pelo personal, aluno escolhe, Pix manual, comprovante, aprovação, link de Meet/Zoom, conclusão.
-
-## PWA e imagens
-
-- Ícones 192 e 512 em `public/icons`, manifesto em `public/manifest.webmanifest` e service worker `public/sw.js`.
-- No iPhone: Safari → Compartilhar → Adicionar à Tela de Início. Android: Instalar aplicativo pelo Chrome.
-- A marca é exibida em cabeçalhos e áreas independentes. A foto do Wagner ocupa a lateral da apresentação, sem logo sobre o rosto ou corpo.
-- O cache do service worker **não armazena APIs autenticadas nem comprovantes**.
-
-## Considerações de segurança e continuidade
-
-- Pix é manual: confirme o pagamento no aplicativo do banco, nunca somente pelo PDF/foto.
-- As fotos em `public/brand` são recursos públicos do site. Comprovantes em `private/proofs` são privados e só passam pela API autenticada.
-- `scripts/02_CONFIGURAR_LOGIN_WAGNER_EXECUTAR_UMA_VEZ.sql` é confidencial durante a implantação; remova-o de qualquer repositório público.
-- O frontend foi recriado com React/TypeScript e o backend usa as tabelas essenciais do AFIT 3.0; é necessário validar no seu ambiente D1/R2 antes de substituir a versão em produção.
-- Para preservar cadastro e treinos, **não remova o banco antigo nem execute DROP TABLE**.
-
-Veja também `docs/CHECKLIST_DE_TESTES.md` e `docs/ATUALIZACAO_D1.md`.
+### Importante
+Esta versão foi testada com um ambiente D1 SQLite simulado e testes de API, **não foi implantada automaticamente** na Cloudflare. A compilação completa do front-end exige dependências npm e validação no ambiente real. Veja `docs/GUIA_PUBLICACAO_4_3.md`.

@@ -1,4 +1,4 @@
-const VERSION='wn-v4-2-premium-hero-2026-11-07';
+const VERSION='wagner-noronha-4-3-saude-2026-11-08';
 const PRECACHE=['/','/manifest.webmanifest','/icons/icon-192.png','/icons/icon-512.png','/brand/logo-wagner.png','/brand/wagner-hero-v42.jpg'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(VERSION).then(cache=>cache.addAll(PRECACHE)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==VERSION).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});

@@ -11,7 +11,7 @@ Execute no console do D1:
 - `migrations/0005_PIX_MANUAL_BANCO_EXISTENTE.sql`
 - `migrations/0006_INCLUIR_PLANO_TESTE_OPCIONAL.sql` **apenas** se quiser que um plano de teste apareça no D1 existente.
 
-`0005` cria novas tabelas e configurações. Não altera nem exclui alunos, treinos e pagamentos antigos. Ele exige que as tabelas existentes `users`, `plans` e `consultation_requests` já estejam presentes (a versão AFIT 3.0 já as utiliza). Se o seu ambiente nunca executou `migrations/0003_student_experience.sql` ou `migrations/0004_consultations.sql`, primeiro verifique quais tabelas e colunas ainda faltam. **Não execute cegamente migrações antigas**, pois algumas repetem `ALTER TABLE` que pode já ter sido aplicado.
+`0005` cria novas tabelas e configurações. Não altera nem exclui alunos, treinos e pagamentos antigos. Ele exige que as tabelas existentes `users`, `plans` e `consultation_requests` já estejam presentes (a versão versão antiga já as utiliza). Se o seu ambiente nunca executou `migrations/0003_student_experience.sql` ou `migrations/0004_consultations.sql`, primeiro verifique quais tabelas e colunas ainda faltam. **Não execute cegamente migrações antigas**, pois algumas repetem `ALTER TABLE` que pode já ter sido aplicado.
 
 As novas tabelas são:
 - `plan_pix_config`: chave Pix e beneficiário por plano;
