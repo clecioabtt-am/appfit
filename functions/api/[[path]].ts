@@ -64,6 +64,26 @@ export const onRequest=async ({request,env,params}:Context):Promise<Response>=>{
    const b=await data(request);const r=await env.DB.prepare(`SELECT password_hash FROM ${user.role==='doctor'?'doctor_accounts':'users'} WHERE id=?`).bind(user.id).first();if(!await verifyPassword(String(b.currentPassword||''),r.password_hash))bad('Senha atual incorreta.',403);if(String(b.newPassword||'').length<8)bad('A nova senha precisa ter pelo menos 8 caracteres.');
    await env.DB.prepare(`UPDATE ${user.role==='doctor'?'doctor_accounts':'users'} SET password_hash=? WHERE id=?`).bind(await hashPassword(String(b.newPassword)),user.id).run();return json({ok:true});
   }
+  // Foto de perfil do medico: rota independente do painel administrativo.
+  // A foto fica em pasta publica do R2; planos clinicos e comprovantes continuam privados.
+  if(path==='/api/account/photo'&&method==='POST'){
+   auth(user,'doctor');
+   const form=await request.formData();
+   const file=form.get('file');
+   if(!(file instanceof File))bad('Selecione uma imagem para o perfil médico.');
+   let saved;
+   try{
+    saved=await storeFile(env,file,`public/doctor-avatars/${user.id}`,imageTypes,4*1024*1024);
+   }catch(e:any){bad(e?.message||'Não foi possível enviar a imagem.');}
+   const photo=`/media/${encodeURIComponent(saved.key)}`;
+   try{
+    await env.DB.prepare('UPDATE doctor_accounts SET profile_image_url=? WHERE id=? AND active=1').bind(photo,user.id).run();
+   }catch(e){
+    await env.MEDIA.delete(saved.key).catch(()=>{});
+    throw e;
+   }
+   return json({ok:true,url:photo});
+  }
   if(path==='/api/student/profile-photo'&&method==='POST'){
    auth(user,'student');const fd=await request.formData();const file=fd.get('file');if(!(file instanceof File))bad('Selecione sua foto.');let f;try{f=await storeFile(env,file,`profiles/${user.id}`,imageTypes);}catch(e:any){bad(e.message);}
    const photo=`/media/${encodeURIComponent(f.key)}`;await env.DB.prepare('UPDATE users SET profile_image_url=? WHERE id=?').bind(photo,user.id).run();return json({url:photo});
